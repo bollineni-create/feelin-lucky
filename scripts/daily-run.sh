@@ -72,6 +72,12 @@ if ! claude --help 2>/dev/null | grep -q -- "$CHROME_FLAG"; then
   fail_run "This Claude Code has no $CHROME_FLAG flag. Update Claude Code, or set CLAUDE_CHROME_FLAG in .env to the flag 'claude --help' lists."
   exit 1
 fi
+# Runs started by launchd or the app often can't read the login Terminal's `claude` saved in the Keychain.
+# A token from `claude setup-token`, saved as CLAUDE_CODE_OAUTH_TOKEN in .env, works from anywhere.
+if [ "$(claude auth status --json 2>/dev/null | json_field ".get('loggedIn')")" = "False" ]; then
+  fail_run "Claude Code isn't signed in for background runs. In Terminal run 'claude setup-token' and add the token it prints to .env as CLAUDE_CODE_OAUTH_TOKEN=…, then run again."
+  exit 1
+fi
 
 PROMPT="You are running the daily job-hunt agent.
 RUN_ID=$RUN_ID
