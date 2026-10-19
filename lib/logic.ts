@@ -127,6 +127,48 @@ export function queueItems() {
     });
 }
 
+const startOfToday = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+/** Why a found application may not be auto-applied, or null if it may. */
+export function autoApplyBlocker(a: AppWithJob): string | null {
+  const c = getCriteria();
+  if (!c.autoApply) return "auto-apply is off";
+  if (!getProfile().confirmed) return "profile is not confirmed";
+  if (a.stage !== "found") return `stage is "${a.stage}"`;
+  if (!hasMaterials(a) || !a.resumePath) return "materials are not ready";
+  if (a.needsSignin) return "portal needs sign-in";
+  if (!c.autoApplySources.includes(a.job.source)) return `auto-apply is off for ${a.job.source} jobs`;
+  const min = Math.max(c.autoApplyMinScore, thresholdFor(a.job.companyId));
+  if (a.job.fitScore == null || a.job.fitScore < min) return `fit score below ${min}`;
+  const text = [a.resumeMd, a.coverLetterMd, ...(a.answers ?? []).map((q) => q.answer)].join("\n");
+  if (text.includes("[NEEDS YOU")) return "an answer needs your input";
+  return null;
+}
+
+/** Auto-applications submitted since local midnight. */
+export function autoAppliedToday() {
+  return db
+    .select({ n: sql<number>`count(*)` })
+    .from(applications)
+    .where(and(eq(applications.autoApplied, true), sql`${applications.submittedAt} >= ${iso(startOfToday())}`))
+    .get()!.n;
+}
+
+/** Found applications the agent may submit without a Queue approval, best first, within today's cap. */
+export function autoApplyCandidates(): AppWithJob[] {
+  const c = getCriteria();
+  if (!c.autoApply) return [];
+  const remaining = Math.max(0, c.autoApplyDailyCap - autoAppliedToday());
+  return listApplications(eq(applications.stage, "found"))
+    .filter((a) => autoApplyBlocker(a) == null)
+    .sort((x, y) => (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0))
+    .slice(0, remaining);
+}
+
 export function latestRuns(limit = 8) {
   return db.select().from(runs).orderBy(desc(runs.startedAt)).limit(limit).all();
 }

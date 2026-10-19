@@ -83,6 +83,8 @@ export const applications = sqliteTable(
     skipReason: text("skip_reason"),
     notes: text("notes"),
     linkedinStatus: text("linkedin_status"),
+    // Submitted by the agent under the auto-apply rules rather than a Queue approval.
+    autoApplied: integer("auto_applied", { mode: "boolean" }).notNull().default(false),
   },
   (t) => [uniqueIndex("applications_job_idx").on(t.jobId), index("applications_stage_idx").on(t.stage)],
 );
@@ -127,6 +129,11 @@ export const searchCriteria = sqliteTable("search_criteria", {
   lookbackDays: integer("lookback_days").notNull().default(7),
   broadSearches: text("broad_searches", { mode: "json" }).$type<BroadSearch[]>().notNull(),
   notes: text("notes"),
+  // Auto-apply: the agent submits strong matches without waiting for a Queue approval.
+  autoApply: integer("auto_apply", { mode: "boolean" }).notNull().default(false),
+  autoApplyMinScore: integer("auto_apply_min_score").notNull().default(85),
+  autoApplyDailyCap: integer("auto_apply_daily_cap").notNull().default(10),
+  autoApplySources: text("auto_apply_sources", { mode: "json" }).$type<Source[]>().notNull().default(["careers", "linkedin"]),
   updatedAt: text("updated_at").notNull().$defaultFn(now),
 });
 
