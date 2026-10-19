@@ -1,7 +1,7 @@
 import AppKit
 import WebKit
 
-// Job Hunt: a native window around the app at 127.0.0.1:3000, the way Palimpsest wraps its site.
+// Lodestar (the Job Hunt app): a native window around the app at 127.0.0.1:3000, the way Palimpsest wraps its site.
 // The server normally runs all the time (launch agent com.jobhunt.app). If it isn't answering, the app
 // starts it, shows a short "Starting" page, and loads the app as soon as it responds.
 // The project folder is stored in Info.plist (JobHuntFolder) by scripts/make-mac-app.sh.
@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
-        window.title = "Job Hunt"
+        window.title = "Lodestar"
         window.minSize = NSSize(width: 720, height: 520)
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.backgroundColor = .windowBackgroundColor
@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 self.webView.load(URLRequest(url: URL(string: path, relativeTo: appURL)!))
                 return
             }
-            self.showMessage("Starting Job Hunt…", detail: "This takes a few seconds.")
+            self.showMessage("Starting Lodestar…", detail: "This takes a few seconds.")
             self.startServer()
             self.waited = 0
             self.waitTimer?.invalidate()
@@ -95,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                         self.webView.load(URLRequest(url: URL(string: path, relativeTo: appURL)!))
                     } else if self.waited >= 60 {
                         timer.invalidate()
-                        self.showMessage("Job Hunt didn't start", detail: "Details are in \(self.folder)/logs/app.log. Choose View → Reload to try again.")
+                        self.showMessage("Lodestar didn't start", detail: "Details are in \(self.folder)/logs/app.log. Choose View → Reload to try again.")
                     }
                 }
             }
@@ -197,11 +197,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let appItem = NSMenuItem(); main.addItem(appItem)
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About Job Hunt", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About Lodestar", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide Job Hunt", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Hide Lodestar", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Job Hunt", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit Lodestar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 
         let editItem = NSMenuItem(); main.addItem(editItem)
@@ -228,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         view.addItem(withTitle: "Reload", action: #selector(reloadPage(_:)), keyEquivalent: "r")
         view.addItem(.separator())
         view.addItem(withTitle: "Open in Browser", action: #selector(openInBrowser(_:)), keyEquivalent: "")
-        view.addItem(withTitle: "Show Job Hunt Folder", action: #selector(revealFolder(_:)), keyEquivalent: "")
+        view.addItem(withTitle: "Show Lodestar Folder", action: #selector(revealFolder(_:)), keyEquivalent: "")
         view.addItem(.separator())
         let fs = NSMenuItem(title: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fs.keyEquivalentModifierMask = [.control, .command]

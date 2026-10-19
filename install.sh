@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # One-step install / update for Mac. Paste into Terminal:
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/bollineni-create/feelin-lucky/refs/heads/claude/auto-apply-jobs-eppnao/install.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/bollineni-create/feelin-lucky/refs/heads/main/install.sh)"
 # Downloads the app into ~/JobHunt (keeping your data on updates), picks up my-profile.json and your
 # resume/CV PDFs from Downloads, then runs "Install Job Hunt.command".
 set -euo pipefail
 
 REPO="bollineni-create/feelin-lucky"
-BRANCH="${JOBHUNT_BRANCH:-claude/auto-apply-jobs-eppnao}"
+BRANCH="${JOBHUNT_BRANCH:-main}"
 DEST="${JOBHUNT_DIR:-$HOME/JobHunt}"
 
 [ "$(uname)" = "Darwin" ] || { echo "This installer is for macOS."; exit 1; }
