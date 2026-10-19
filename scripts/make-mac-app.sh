@@ -97,7 +97,9 @@ touch "$APP"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" >/dev/null 2>&1 || true
 
 # Keep it in the Dock (once; reinstalls leave the Dock alone). Drop the tile left by the old "Job Hunt.app" first.
-DOCK="$HOME/Library/Preferences/com.apple.dock.plist"
+# The edit goes through defaults export/import: macOS caches the Dock's settings, so editing the file directly can be lost.
+DOCK="$(mktemp)"
+defaults export com.apple.dock "$DOCK" 2>/dev/null || true
 DOCK_CHANGED=0
 i=0
 while URL_I="$(/usr/libexec/PlistBuddy -c "Print :persistent-apps:$i:tile-data:file-data:_CFURLString" "$DOCK" 2>/dev/null)" \
@@ -109,7 +111,8 @@ while URL_I="$(/usr/libexec/PlistBuddy -c "Print :persistent-apps:$i:tile-data:f
   fi
   URL_I=""
 done
-if [ "$DOCK_CHANGED" = 1 ]; then defaults read com.apple.dock >/dev/null 2>&1; fi   # make cfprefsd pick up the file edit
+if [ "$DOCK_CHANGED" = 1 ]; then defaults import com.apple.dock "$DOCK"; fi
+rm -f "$DOCK"
 if [ "$NATIVE" = 1 ] && ! defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q "Lodestar.app"; then
   defaults write com.apple.dock persistent-apps -array-add \
     "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file://${APP// /%20}/</string><key>_CFURLStringType</key><integer>15</integer></dict></dict></dict>"
