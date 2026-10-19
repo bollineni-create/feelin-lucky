@@ -23,7 +23,10 @@ export function Header({ queueCount, lastScan, owner }: { queueCount: number; la
     <header className="topbar">
       <div className="container">
         <Link href="/" className="wordmark">
-          JOB HUNT{owner ? ` / ${owner.toUpperCase()}` : ""}
+          <svg className="mark" aria-hidden="true" width="16" height="16" viewBox="0 0 16 16">
+            <path d="M8 0C8.3 4.6 8.8 5.6 12.4 6.4 8.8 6.9 8.3 7.8 8 12.4 7.7 7.8 7.2 6.9 3.6 6.4 7.2 5.6 7.7 4.6 8 0Z" />
+          </svg>
+          LODESTAR{owner ? ` / ${owner.toUpperCase()}` : ""}
         </Link>
         <nav className="nav" aria-label="Sections">
           {items.map((i) => (

@@ -92,6 +92,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .topbar { background: var(--surface); border-bottom: 1px solid var(--border); }
 .topbar .container { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; padding-top: 16px; padding-bottom: 16px; }
 .wordmark { font: 500 15px/1 var(--mono); letter-spacing: 0.04em; color: var(--ink); text-decoration: none; }
+.wordmark { display: inline-flex; align-items: center; gap: 8px; }
+.wordmark .mark { fill: var(--accent-text); flex: none; }
 .wordmark:hover { color: var(--ink); }
 .theme-toggle { min-height: 36px; padding: 6px 12px; font-size: 13px; }
 .nav { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; }

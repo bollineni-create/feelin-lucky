@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds "Job Hunt.app" in ~/Applications and keeps it in the Dock. Opening it starts the app server if it
+# Builds "Lodestar.app" (the Job Hunt app) in ~/Applications and keeps it in the Dock. Opening it starts the app server if it
 # isn't already running (through the com.jobhunt.app launch agent when installed) and shows the app.
 # With Apple's command line tools (xcode-select --install) it's a native window with its own menus, like
 # Palimpsest (scripts/mac/JobHunt.swift); without them it opens the app in the default browser instead.
@@ -8,14 +8,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$HOME/Applications/Job Hunt.app"
+APP="$HOME/Applications/Lodestar.app"
+OLD_APP="$HOME/Applications/Job Hunt.app"   # its name before the rename
 
 if [ "${1:-}" = "--remove" ]; then rm -rf "$APP"; echo "Removed $APP (remove it from the Dock by dragging it out)"; exit 0; fi
 [ "$(uname)" = "Darwin" ] || { echo "This builds a macOS app; run it on your Mac."; exit 1; }
 NODE_DIR="$(dirname "$(command -v node)")" || { echo "node not found"; exit 1; }
 
 osascript -e 'tell application id "com.jobhunt.launcher" to quit' >/dev/null 2>&1 || true
-rm -rf "$APP"
+rm -rf "$APP" "$OLD_APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -23,8 +24,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Job Hunt</string>
-  <key>CFBundleDisplayName</key><string>Job Hunt</string>
+  <key>CFBundleName</key><string>Lodestar</string>
+  <key>CFBundleDisplayName</key><string>Lodestar</string>
   <key>CFBundleIdentifier</key><string>com.jobhunt.launcher</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -43,7 +44,7 @@ sed -i '' -e "s#__ROOT__#$ROOT#" -e "s#__NODE_DIR__#$NODE_DIR#" "$APP/Contents/I
 # "install developer tools?" pop-up that /usr/bin/swiftc shows when they're missing.
 NATIVE=0
 if xcode-select -p >/dev/null 2>&1 && xcrun --find swiftc >/dev/null 2>&1; then
-  echo "Compiling the Job Hunt window app"
+  echo "Compiling the Lodestar window app"
   if xcrun swiftc -O -o "$APP/Contents/MacOS/JobHunt" "$ROOT/scripts/mac/JobHunt.swift"; then NATIVE=1; fi
 fi
 
@@ -59,7 +60,7 @@ LAUNCHER
 cat >> "$APP/Contents/MacOS/JobHunt" <<'LAUNCHER'
 URL="http://127.0.0.1:3000"
 up() { curl -s -o /dev/null --max-time 2 "$URL"; }
-alert() { osascript -e "display alert \"Job Hunt\" message \"$1\" as critical" >/dev/null 2>&1; }
+alert() { osascript -e "display alert \"Lodestar\" message \"$1\" as critical" >/dev/null 2>&1; }
 
 if [ ! -d "$ROOT" ]; then alert "The Job Hunt folder moved or was deleted ($ROOT). Run 'Install Job Hunt.command' again from its new location."; exit 1; fi
 if ! up; then
@@ -77,7 +78,7 @@ LAUNCHER
 chmod +x "$APP/Contents/MacOS/JobHunt"
 fi
 
-# Icon: a teal tile with "JH", drawn with the system's own tools (no downloads).
+# Icon: the Lodestar north star on a teal tile, drawn with the system's own tools (no downloads).
 ICON_SRC="$ROOT/scripts/app-icon.svg"
 if [ -f "$ICON_SRC" ]; then
   TMP="$(mktemp -d)"
@@ -95,19 +96,33 @@ codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
 touch "$APP"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" >/dev/null 2>&1 || true
 
-# Keep it in the Dock (once; reinstalls leave the Dock alone).
-if [ "$NATIVE" = 1 ] && ! defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q "Job%20Hunt.app"; then
+# Keep it in the Dock (once; reinstalls leave the Dock alone). Drop the tile left by the old "Job Hunt.app" first.
+DOCK="$HOME/Library/Preferences/com.apple.dock.plist"
+DOCK_CHANGED=0
+i=0
+while URL_I="$(/usr/libexec/PlistBuddy -c "Print :persistent-apps:$i:tile-data:file-data:_CFURLString" "$DOCK" 2>/dev/null)" \
+   || /usr/libexec/PlistBuddy -c "Print :persistent-apps:$i" "$DOCK" >/dev/null 2>&1; do
+  if [[ "$URL_I" == *"/Job%20Hunt.app/"* ]]; then
+    /usr/libexec/PlistBuddy -c "Delete :persistent-apps:$i" "$DOCK" && DOCK_CHANGED=1
+  else
+    i=$((i + 1))
+  fi
+  URL_I=""
+done
+if [ "$DOCK_CHANGED" = 1 ]; then defaults read com.apple.dock >/dev/null 2>&1; fi   # make cfprefsd pick up the file edit
+if [ "$NATIVE" = 1 ] && ! defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q "Lodestar.app"; then
   defaults write com.apple.dock persistent-apps -array-add \
     "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file://${APP// /%20}/</string><key>_CFURLStringType</key><integer>15</integer></dict></dict></dict>"
-  killall Dock 2>/dev/null || true
-  echo "Added Job Hunt to the Dock"
+  DOCK_CHANGED=1
+  echo "Added Lodestar to the Dock"
 fi
+if [ "$DOCK_CHANGED" = 1 ]; then killall Dock 2>/dev/null || true; fi
 
 echo "Created $APP"
 if [ "$NATIVE" = 1 ]; then
-  echo "Click Job Hunt in the Dock to open it in its own window."
+  echo "Click Lodestar in the Dock to open it in its own window."
 else
-  echo "Open it from Launchpad or Spotlight (\"Job Hunt\"). For its own window and a Dock icon, run"
+  echo "Open it from Launchpad or Spotlight (\"Lodestar\"). For its own window and a Dock icon, run"
   echo "  xcode-select --install"
   echo "then run the installer again."
 fi

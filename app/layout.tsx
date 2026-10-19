@@ -4,7 +4,7 @@ import { themeScript } from "@/components/ThemeToggle";
 import { activeRun, getProfile, latestRuns, queueItems } from "@/lib/logic";
 import "./globals.css";
 
-export const metadata: Metadata = { title: "Job Hunt Command Center" };
+export const metadata: Metadata = { title: "Lodestar" };
 export const dynamic = "force-dynamic";
 
 function lastScanText() {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Double-click in Finder to install Job Hunt on this Mac: dependencies, database, build,
-# the always-on app server + weekday 7:00 AM agent run, and "Job Hunt.app" in ~/Applications.
+# the always-on app server + weekday 7:00 AM agent run, and "Lodestar.app" (the app) in ~/Applications.
 # Safe to run again after pulling updates.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -42,12 +42,12 @@ npm run build
 step "Keeping the app running and scheduling the daily agent"
 bash scripts/install-launchd.sh   # (re)loads the server, so it serves this build
 
-step "Creating Job Hunt.app"
+step "Creating Lodestar.app"
 bash scripts/make-mac-app.sh
 
-step "Opening Job Hunt"
-open "$HOME/Applications/Job Hunt.app"
-echo "Done. Next time, click Job Hunt in the Dock (or find it with Spotlight)."
+step "Opening Lodestar"
+open "$HOME/Applications/Lodestar.app"
+echo "Done. Next time, click Lodestar in the Dock (or find it with Spotlight)."
 if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ] && [ ! -x "$HOME/.claude/local/claude" ]; then
   echo
   echo "One thing left for the agent to search and apply: install Claude Code and sign in."

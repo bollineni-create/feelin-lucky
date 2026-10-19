@@ -1,4 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="#0F6B5C"/>
-  <text x="512" y="610" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="360" font-weight="700" fill="#F7F5F0">JH</text>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#14806E"/>
+      <stop offset="1" stop-color="#0A4038"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#sky)"/>
+  <!-- the lodestar: a four-point star, with a faint horizon below it and a small companion star -->
+  <path d="M512 132 C526 352 548 404 712 440 C548 462 528 500 512 716 C496 500 476 462 312 440 C476 404 498 352 512 132 Z" fill="#F7F5F0"/>
+  <circle cx="512" cy="440" r="210" fill="none" stroke="#F7F5F0" stroke-opacity="0.22" stroke-width="12"/>
+  <path d="M196 830 Q512 762 828 830" fill="none" stroke="#F7F5F0" stroke-opacity="0.35" stroke-width="20" stroke-linecap="round"/>
+  <path d="M772 196 C776 230 784 238 818 242 C784 246 776 254 772 288 C768 254 760 246 726 242 C760 238 768 230 772 196 Z" fill="#F3C99C"/>
 </svg>
