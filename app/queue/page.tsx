@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 const SKIP_REASONS = ["Not the right function", "Too junior", "Too senior", "Location doesn't work", "Pay too low", "Not interested in the company", "Already applied elsewhere"];
 
 const Check = () => (
-  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#0F6B5C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ stroke: "var(--accent-text)" }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M3 8.5l3 3 7-7" />
   </svg>
 );
@@ -100,7 +100,7 @@ export default function QueuePage() {
           </Link>
         </div>
         <div className="panel-dark" style={{ fontSize: 13 }}>
-          <div style={{ color: "var(--ground)", fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Needs you</div>
+          <div style={{ color: "var(--panel-dark-head)", fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Needs you</div>
           Portals that require a new account or sign-in are flagged instead of filled. You sign in once; the agent picks up from there on the next run.
         </div>
       </aside>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ThemeToggle } from "./ThemeToggle";
 
 export function Header({ queueCount, lastScan, owner }: { queueCount: number; lastScan: string; owner: string }) {
   const path = usePathname();
@@ -36,6 +37,7 @@ export function Header({ queueCount, lastScan, owner }: { queueCount: number; la
           {path.startsWith("/companies") ? null : <span className={`dot ${path.startsWith("/queue") && /failed/.test(lastScan) ? "warn" : ""}`} aria-hidden />}
           <span>{status}</span>
         </div>
+        <ThemeToggle />
       </div>
     </header>
   );
