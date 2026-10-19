@@ -48,4 +48,9 @@ bash scripts/make-mac-app.sh
 step "Opening Job Hunt"
 open "$HOME/Applications/Job Hunt.app"
 echo "Done. Next time, open \"Job Hunt\" from Spotlight, Launchpad or the Dock."
-echo "First stop: Settings — fill in and confirm your profile."
+if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ] && [ ! -x "$HOME/.claude/local/claude" ]; then
+  echo
+  echo "One thing left for the agent to search and apply: install Claude Code and sign in."
+  echo "  curl -fsSL https://claude.ai/install.sh | bash   then run: claude"
+  echo "Then add the Claude in Chrome extension to Chrome and connect it."
+fi

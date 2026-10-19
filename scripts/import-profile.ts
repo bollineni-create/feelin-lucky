@@ -30,11 +30,19 @@ if (!starter && current.updatedAt > fileTime && !process.argv.includes("--force"
   const data = JSON.parse(fs.readFileSync(FILE, "utf8")) as Record<string, unknown>;
   const values = Object.fromEntries(FIELDS.filter((k) => k in data).map((k) => [k, data[k]]));
   if (!Array.isArray(values.workHistory)) throw new Error("my-profile.json: workHistory must be a list");
+  // "confirmed": true in the file is the user's sign-off; placeholders still block it, as in Settings.
+  const confirmed = data.confirmed === true && !/\[(CONFIRM|TITLE)[^\]]*\]/i.test(JSON.stringify(values.workHistory));
   db.update(schema.profile)
-    .set({ ...values, confirmed: false, updatedAt: new Date().toISOString() })
+    .set({ ...values, confirmed, updatedAt: new Date().toISOString() })
     .where(eq(schema.profile.id, 1))
     .run();
-  console.log(`Loaded profile for ${values.fullName ?? "you"} from my-profile.json. Check it and tick "confirmed" in Settings.`);
+  const criteria = data.criteria as Record<string, unknown> | undefined;
+  if (criteria) {
+    const keys = ["autoApply", "autoApplySources", "autoApplyMinScore", "autoApplyDailyCap", "minBase"] as const;
+    const set = Object.fromEntries(keys.filter((k) => k in criteria).map((k) => [k, criteria[k]]));
+    if (Object.keys(set).length) db.update(schema.searchCriteria).set({ ...set, updatedAt: new Date().toISOString() }).where(eq(schema.searchCriteria.id, 1)).run();
+  }
+  console.log(`Loaded profile for ${values.fullName ?? "you"} from my-profile.json${confirmed ? " (confirmed)" : '. Check it and tick "confirmed" in Settings'}.`);
 }
 
 const docs = path.join(DATA_DIR, "source-docs");
