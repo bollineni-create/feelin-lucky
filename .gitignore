@@ -8,3 +8,6 @@ data/*
 !data/.gitkeep
 logs/
 .DS_Store
+.node/
+my-profile.json
+/*.pdf
