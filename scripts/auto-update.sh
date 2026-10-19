@@ -33,7 +33,9 @@ main() {
 
   [ "${JOBHUNT_AUTO_UPDATE:-1}" = "0" ] && { tell "Automatic updates are off (JOBHUNT_AUTO_UPDATE=0 in .env)."; exit 0; }
   # Don't restart the app under a running agent; the next check picks the update up.
-  [ -d logs/.run.lock ] && { tell "The agent is running. Lodestar will update when it's done."; exit 0; }
+  # (A lock whose pid is gone was left by a killed run; the next run takes it over.)
+  RUN_PID="$(cat logs/.run.lock/pid 2>/dev/null)"
+  [ -d logs/.run.lock ] && { [ -z "$RUN_PID" ] || ps -o stat= -p "$RUN_PID" 2>/dev/null | grep -qv Z; } && { tell "The agent is running. Lodestar will update when it's done."; exit 0; }
 
   LOCK="logs/.update.lock"
   if ! mkdir "$LOCK" 2>/dev/null; then

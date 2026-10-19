@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { ROOT } from "./db";
-import { activeRun } from "./logic";
+import { eq } from "drizzle-orm";
+import { ROOT, db, schema } from "./db";
+import { activeRun, iso, runProcess } from "./logic";
 
 export const PHASES = ["submit", "find", "prepare", "track"] as const;
 
@@ -25,5 +26,32 @@ export function startAgentRun(phase: string, trigger: "manual" | "submit-now"): 
     env: process.env,
   });
   child.unref();
+  return { ok: true };
+}
+
+/** Stops the run in progress. The script's signal trap stops Claude Code and marks the run failed. */
+export function stopAgentRun(): { ok: true } | { ok: false; error: string } {
+  const running = activeRun();
+  if (!running) return { ok: false, error: "No run is in progress." };
+  const proc = runProcess();
+  if (proc) {
+    try {
+      process.kill(proc.pid, "SIGTERM");
+    } catch {
+      // Gone already; closed below.
+    }
+  }
+  // A script from before the signal trap leaves Claude Code running on its own; stop that too.
+  try {
+    execFileSync("pkill", ["-TERM", "-f", "running the daily job-hunt agent"]);
+  } catch {
+    // Nothing matched.
+  }
+  if (!proc) {
+    db.update(schema.runs)
+      .set({ status: "failed", finishedAt: iso(), errors: [...(running.errors ?? []), "Stopped from the app."] })
+      .where(eq(schema.runs.id, running.id))
+      .run();
+  }
   return { ok: true };
 }

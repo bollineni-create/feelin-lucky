@@ -1,5 +1,8 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { and, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
-import { db, schema } from "./db";
+import { ROOT, db, schema } from "./db";
 import type { Application, Job, Stage } from "@/db/schema";
 
 const { applications, jobs, events, companies, searchCriteria, profile, runs } = schema;
@@ -181,12 +184,63 @@ export function latestRuns(limit = 8) {
   return db.select().from(runs).orderBy(desc(runs.startedAt)).limit(limit).all();
 }
 
+const RUN_LOCK = path.join(ROOT, "logs", ".run.lock");
+
+// Alive and not a zombie (a killed process its parent hasn't reaped yet).
+const alive = (pid: number) => {
+  try {
+    return !execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+  } catch {
+    return false;
+  }
+};
+
+/** The pid of the scripts/daily-run.sh process that holds the run lock, if it's still alive. */
+export function runProcess(): { pid: number; runId: number | null } | null {
+  const read = (f: string) => {
+    try {
+      return Number(fs.readFileSync(path.join(RUN_LOCK, f), "utf8").trim()) || null;
+    } catch {
+      return null;
+    }
+  };
+  const pid = read("pid");
+  if (pid && alive(pid)) return { pid, runId: read("run_id") };
+  if (pid) return null;
+  // A script from before the lock held a pid.
+  try {
+    const found = Number(execFileSync("pgrep", ["-f", "scripts/daily-run.sh"], { encoding: "utf8" }).split("\n")[0]);
+    return found ? { pid: found, runId: null } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Closes runs left at "running" whose script is gone (the app or Mac restarted under it, or it was killed). */
+function closeDeadRuns() {
+  const open = db.select().from(runs).where(eq(runs.status, "running")).orderBy(runs.id).all();
+  if (open.length === 0) return;
+  const proc = runProcess();
+  // The script creates the run record a moment before it writes run_id; give a new run that long.
+  const grace = iso(new Date(Date.now() - 2 * 60_000));
+  for (const r of open) {
+    const live = proc && (proc.runId == null ? r.id === open[open.length - 1].id : proc.runId === r.id);
+    if (live || r.startedAt > grace) continue;
+    db.update(runs)
+      .set({ status: "failed", finishedAt: iso(), errors: [...(r.errors ?? []), "The run stopped without closing (the app or Mac restarted under it, or it was stopped)."] })
+      .where(eq(runs.id, r.id))
+      .run();
+  }
+}
+
 export function activeRun() {
+  closeDeadRuns();
   // A run still "running" after 3 hours is treated as dead.
   return db
     .select()
     .from(runs)
     .where(and(eq(runs.status, "running"), sql`${runs.startedAt} > ${iso(new Date(Date.now() - 3 * 3_600_000))}`))
+    .orderBy(desc(runs.startedAt))
     .get();
 }
 
