@@ -128,7 +128,7 @@ export function progressLine(p: RunProgress, running: boolean): string {
     return running ? "Claude Code hasn't written anything yet. If this stays for more than a minute or two, see the log below." : "";
   }
   const parts: string[] = [];
-  if (p.chrome === "missing") parts.push("Claude in Chrome wasn't loaded (sign in with /login, not an API key)");
+  if (p.chrome === "missing") parts.push("Claude in Chrome wasn't loaded, so the agent has no browser tools (see the error)");
   else if (p.chrome && p.chrome !== "connected") parts.push(`Claude in Chrome: ${p.chrome}`);
   if (p.toolCalls != null) {
     parts.push(`${p.toolCalls}${p.toolCallsPartial ? "+" : ""} tool call${p.toolCalls === 1 ? "" : "s"}`);

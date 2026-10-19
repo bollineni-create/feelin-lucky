@@ -40,6 +40,8 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 LOG="logs/run-$STAMP.log"
 # Every tool call and message the agent makes, one JSON event per line, so a run can be checked afterwards.
 TRANSCRIPT="logs/run-$STAMP.jsonl"
+# Claude Code's own debug log; its "[Claude in Chrome]" lines say why the browser tools were or weren't loaded.
+DEBUG_LOG="logs/run-$STAMP.debug.log"
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
 
 # One run at a time.
@@ -98,6 +100,25 @@ if ! claude --help 2>/dev/null | grep -q -- "$CHROME_FLAG"; then
   exit 1
 fi
 
+# Claude in Chrome needs a claude.ai subscription sign-in (/login). Under an API key, a Console account or a
+# long-lived token the integration stays off even with --chrome, and the agent starts with no browser tools.
+# `claude auth status` shows what this run will sign in with (the .env token and key are already unset above).
+AUTH_JSON="$(claude auth status 2>/dev/null)"
+if [ -n "$AUTH_JSON" ]; then
+  LOGGED_IN="$(echo "$AUTH_JSON" | json_field "['loggedIn']")"
+  AUTH_METHOD="$(echo "$AUTH_JSON" | json_field "['authMethod']")"
+  if [ "$LOGGED_IN" != "True" ]; then
+    fail_run "Claude Code isn't signed in for this account (claude auth status: not logged in). In Terminal run 'claude' and sign in with /login using your claude.ai subscription, then run the scan again."
+    exit 1
+  fi
+  case "$AUTH_METHOD" in
+    api_key|api_key_helper|third_party)
+      fail_run "Claude Code is signed in with an API key ($AUTH_METHOD), and Claude in Chrome needs a claude.ai subscription sign-in. Remove ANTHROPIC_API_KEY and apiKeyHelper from ~/.claude/settings.json, run 'claude auth logout', then 'claude' and /login."
+      exit 1 ;;
+    *) log "Claude Code sign-in: $AUTH_METHOD" ;;
+  esac
+fi
+
 # The agent works in the user's own Chrome; open it if it isn't running and give the extension time to connect.
 if [ "$(uname)" = "Darwin" ]; then
   CHROME_APP="${JOBHUNT_CHROME_APP:-Google Chrome}"
@@ -125,6 +146,7 @@ claude -p "$PROMPT" "$CHROME_FLAG" \
   --output-format stream-json --verbose \
   --allowedTools "$ALLOWED" \
   --disallowedTools "WebFetch,Bash(curl:*),Bash(rm:*),Bash(git:*)" \
+  --debug-file "$ROOT/$DEBUG_LOG" \
   >"$TRANSCRIPT" 2>>"$LOG" &
 CLAUDE_PID=$!
 
@@ -159,7 +181,10 @@ if kill -0 "$CLAUDE_PID" 2>/dev/null; then
   if [ -z "$CHROME" ]; then
     STARTUP_ERR="Claude Code wrote nothing in ${STARTUP_SECS}s. It may be stuck on a one-time prompt: in Terminal run 'claude --chrome', press Enter through the Chrome introduction, check that /chrome shows Enabled and Installed, then run the scan again."
   elif [ "$CHROME" = "missing" ]; then
-    STARTUP_ERR="Claude in Chrome isn't loaded in this session. Claude Code is signed in with an API key or a setup-token token, or Chrome integration is off: in Terminal run 'claude', sign in with /login, and check /chrome."
+    # Claude Code logs why it left the integration off, e.g. an OAuth token without the user:profile scope
+    # (a setup-token or CLAUDE_CODE_OAUTH_TOKEN sign-in) or an organization policy.
+    WHY="$(grep -a -o -E '\[Claude in Chrome\] (Disabled|Skipping|Ignoring).*' "$DEBUG_LOG" 2>/dev/null | head -1)"
+    STARTUP_ERR="Claude in Chrome isn't loaded in this session, so the agent has no browser tools.${WHY:+ Claude Code says: $WHY.} Sign in with a claude.ai subscription: in Terminal run 'claude auth logout', then 'claude' and /login (not an API key or a 'claude setup-token' token), and check that /chrome shows Enabled."
   elif [ "$CHROME" = "failed" ] || [ "$CHROME" = "needs-auth" ]; then
     STARTUP_ERR="Claude in Chrome didn't connect (status: $CHROME). Check the extension is installed, enabled and signed in to the same account as Claude Code, with Chrome open; then run 'claude --chrome' and use /chrome → Reconnect extension."
   fi
@@ -180,7 +205,7 @@ kill "$WATCHDOG" 2>/dev/null || true
 # The agent's closing summary, then how many tool calls it made and which ones were refused.
 python3 - "$TRANSCRIPT" >>"$LOG" 2>/dev/null <<'PY' || true
 import json, sys, collections
-tools, denied, result, servers = collections.Counter(), [], None, None
+tools, denied, result, servers, not_connected = collections.Counter(), [], None, None, 0
 for line in open(sys.argv[1]):
     try: e = json.loads(line)
     except ValueError: continue
@@ -189,6 +214,10 @@ for line in open(sys.argv[1]):
     if e.get("type") == "assistant":
         for c in e.get("message", {}).get("content", []):
             if c.get("type") == "tool_use": tools[c["name"].split("__")[-1]] += 1
+    elif e.get("type") == "user":
+        for c in e.get("message", {}).get("content", []):
+            if c.get("type") == "tool_result" and "Browser extension is not connected" in json.dumps(c.get("content")):
+                not_connected += 1
     elif e.get("type") == "result":
         result = e.get("result")
         denied = [d.get("tool_name") for d in e.get("permission_denials") or []]
@@ -198,6 +227,8 @@ print("--- tool calls:", ", ".join(f"{n}×{k}" for k, n in tools.most_common()) 
 if denied: print("--- refused tool calls:", ", ".join(collections.Counter(denied)))
 if servers is not None and servers.get("claude-in-chrome") != "connected":
     print("--- Claude in Chrome at start:", servers.get("claude-in-chrome") or "not added (sign in with /login, not an API key or setup-token)")
+if not_connected:
+    print(f"--- {not_connected} browser tool call(s) answered 'Browser extension is not connected': open Chrome, check the Claude extension is installed, enabled and signed in to the same claude.ai account as Claude Code, then run 'claude --chrome' and use /chrome -> Reconnect extension.")
 PY
 
 RUN_JSON="$(agent/api.sh GET "/api/agent/runs/$RUN_ID" 2>/dev/null)"
@@ -216,3 +247,4 @@ else
 fi
 find logs/tmp -type f -mtime +14 -delete 2>/dev/null || true
 find logs -maxdepth 1 -name "run-*.jsonl" -mtime +30 -delete 2>/dev/null || true
+find logs -maxdepth 1 -name "run-*.debug.log" -mtime +7 -delete 2>/dev/null || true

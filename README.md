@@ -95,16 +95,16 @@ A full run goes through four phases, in this order:
 
 **What it leaves behind.** Each run gets a row in the Pipeline's run log, a summary in `logs/run-*.log` (the agent's closing message, how many of each tool it called, and any tool calls that were refused) and a full transcript in `logs/run-*.jsonl`. The run log also shows what the app itself recorded (companies marked scanned, new jobs by source), separate from the counts the agent reports. A run that included the find phase but scanned no company and posted no job is marked failed, so a run that didn't search can't show up as ok. Runs are capped at 120 minutes (`JOBHUNT_MAX_MINUTES`), and only one runs at a time. **Stop run** on the Pipeline ends the run in progress. A run whose process is gone (the app or Mac restarted under it) is marked failed the next time the app looks, instead of sitting at "running", and the next run takes over its lock.
 
-### If Run scan now seems to do nothing
+### If a run fails with "no browser tools" or "extension not reachable"
 
-The run log on the Pipeline is where to look. While a run is going it refreshes itself and shows what the agent is doing (its last tool call, how many it has made, and whether Claude in Chrome connected), with the last lines of the run's log underneath. A run that can't get going is marked failed within about two minutes, with the reason:
+The agent drives Chrome through Claude in Chrome, so a run is only as good as that connection. The run log on the Pipeline shows what the agent is doing (its last tool call, how many it has made, and whether Claude in Chrome loaded), with the last lines of the run's log underneath, and refreshes itself while a run is going. A run that can't get going is marked failed within a couple of minutes with the reason. The cases, from most to least common:
 
-- **Claude in Chrome isn't loaded.** Claude Code was signed in with an API key or a `claude setup-token` token, which turn Chrome integration off. In Terminal run `claude`, sign in with `/login`, and check `/chrome`.
-- **Claude in Chrome didn't connect.** Chrome is closed, the extension is missing or disabled, or it's signed in to a different account or organization than Claude Code. Run `claude --chrome` and use `/chrome` → **Reconnect extension**.
-- **Claude Code wrote nothing.** Usually the one-time Chrome introduction, which a headless run can't press Enter through. Run `claude --chrome` once in Terminal and go through it, then try again.
+- **Claude in Chrome isn't loaded (the agent has no browser tools).** Claude Code turns the integration off, even with `--chrome`, unless it's signed in with a claude.ai subscription through `/login`. An API key, a Console account, a `claude setup-token` token or `CLAUDE_CODE_OAUTH_TOKEN` all leave it off; so does an organization policy. The script checks `claude auth status` before each run and quotes Claude Code's own reason (from `logs/run-*.debug.log`) in the run's error. Fix: in Terminal run `claude auth logout`, then `claude` and `/login`, and remove `ANTHROPIC_API_KEY`, `apiKeyHelper` and `CLAUDE_CODE_OAUTH_TOKEN` from `~/.claude/settings.json` (the script already ignores them in `.env`).
+- **The tools are there but every call says "Browser extension is not connected".** Chrome is closed, the extension is missing or disabled, or it's signed in to a different claude.ai account or organization than Claude Code. The run log says how many calls failed this way. Fix: run `claude --chrome`, check `/chrome` shows **Enabled** and **Installed**, use **Reconnect extension**, and fully quit and reopen Chrome once so it picks up the native messaging host.
+- **Claude Code wrote nothing.** Usually the one-time Chrome introduction, which a headless run can't press Enter through. Run `claude --chrome` once in Terminal and go through it.
 - **The button itself reports an error.** The script stopped before it created a run: the app wasn't answering, another run holds `logs/.run.lock`, or `AGENT_TOKEN` is missing from `.env`. `logs/launcher.log` has the detail.
 
-The first browser action on a site can also wait on the extension's own site permission in Chrome; allow the site there (or allow all sites in the extension's settings) and the run carries on.
+To see it all at once, run in Terminal: `claude auth status` (should say `"authMethod": "claude.ai"`), then `claude --chrome` and `/chrome`. The first browser action on a site can also wait on the extension's own site permission in Chrome; allow the site there and the run carries on.
 
 ### Schedule
 
