@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Double-click in Finder to install Job Hunt on this Mac: dependencies, database, build,
-# the always-on app server + weekday 7:00 AM agent run, and "Lodestar.app" (the app) in ~/Applications.
+# the always-on app server + weekday 7:00 AM agent run + automatic updates, and "Lodestar.app" (the app) in /Applications.
 # Safe to run again after pulling updates.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -46,8 +46,11 @@ step "Creating Lodestar.app"
 bash scripts/make-mac-app.sh
 
 step "Opening Lodestar"
-open "$HOME/Applications/Lodestar.app"
-echo "Done. Next time, click Lodestar in the Dock (or find it with Spotlight)."
+APP="/Applications/Lodestar.app"
+[ -d "$APP" ] || APP="$HOME/Applications/Lodestar.app"   # where it goes when this account can't write to /Applications
+open "$APP"
+echo "Done. Next time, click Lodestar in the Dock or open it from your Applications folder (or Spotlight)."
+echo "It keeps itself up to date: no need to run this installer again."
 if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ] && [ ! -x "$HOME/.claude/local/claude" ]; then
   echo
   echo "One thing left for the agent to search and apply: install Claude Code and sign in."
