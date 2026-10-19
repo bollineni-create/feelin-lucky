@@ -95,6 +95,19 @@ if ! claude --help 2>/dev/null | grep -q -- "$CHROME_FLAG"; then
   exit 1
 fi
 
+# The agent works in the user's own Chrome; open it if it isn't running and give the extension time to connect.
+if [ "$(uname)" = "Darwin" ]; then
+  CHROME_APP="${JOBHUNT_CHROME_APP:-Google Chrome}"
+  if ! pgrep -xq "$CHROME_APP"; then
+    if ! open -g -a "$CHROME_APP" 2>>"$LOG"; then
+      fail_run "Couldn't open $CHROME_APP. Install it, or set JOBHUNT_CHROME_APP in .env to the browser's app name."
+      exit 1
+    fi
+    log "Opened $CHROME_APP; waiting for Claude in Chrome to connect…"
+    sleep 15
+  fi
+fi
+
 PROMPT="You are running the daily job-hunt agent.
 RUN_ID=$RUN_ID
 PHASES=$PHASE
