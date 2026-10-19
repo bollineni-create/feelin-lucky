@@ -26,7 +26,7 @@ agent/api.sh UPLOAD 42 logs/tmp/confirm-42.png "Confirmation #A1B2"
 
 | Call | Use |
 |---|---|
-| `GET /api/agent/context` | Criteria, profile, `companies_due`, `approved_to_submit`, `auto_apply` (settings and today's count), `auto_apply_to_submit`, `open_applications`, `jobs_needing_score`, `jobs_needing_materials`, `skip_feedback` |
+| `GET /api/agent/context` | Criteria, profile, `companies_due`, `watchlist_companies`, `approved_to_submit`, `auto_apply` (settings and today's count), `auto_apply_to_submit`, `open_applications`, `jobs_needing_score`, `jobs_needing_materials`, `skip_feedback` |
 | `PATCH /api/agent/runs/$RUN_ID` | `{"phase": "...", "counts": {...}, "errors": ["..."], "status": "ok"\|"failed"}`. Counts and errors merge, so you can send them as you go |
 | `POST /api/agent/jobs` | `{"run_id": N, "jobs": [{company, company_id?, title, location, work_mode, source: "careers"\|"linkedin", url, external_id?, pay_text?, posted_at? (YYYY-MM-DD), description?, fit_score?, fit_reasons?, linkedin_status?}]}`. Max 200 per call. The server dedupes on company + title + location and auto-closes anything under threshold |
 | `POST /api/agent/jobs/:job_id/materials` | `{"resume_version": "resume"\|"cv", "resume_md", "cover_letter_md", "answers": [{question, answer}]}` |
@@ -70,20 +70,22 @@ Work through `approved_to_submit` first, then `auto_apply_to_submit` (skip this 
 
 ## Phase B — find
 
-**Careers sites.** For each company in `companies_due` (high priority first; it's already sorted):
+**The watchlist comes first.** The companies in the app's watchlist are the user's checklist: they matter more than anything a broad search turns up. Do the careers-site scan before LinkedIn, and on LinkedIn look at watchlist companies before anyone else.
+
+**Careers sites.** For each company in `companies_due` (high priority first; it's already sorted). It lists every high-priority company that's due, plus a share of the normal ones:
 
 1. If `careers_url` is empty, find the official careers page (search `"<company> careers"` and pick the company's own domain or its ATS). Record it with `PATCH /api/agent/companies/:id {"careers_url": ..., "ats_type": ...}`. `ats_type` is one of `workday`, `greenhouse`, `lever`, `ashby`, `icims`, `smartrecruiters`, `taleo`, `successfactors`, `oracle`, `custom`.
 2. Prefer the ATS's own job list view (e.g. `boards.greenhouse.io/<co>`, `jobs.lever.co/<co>`, `jobs.ashbyhq.com/<co>`, the Workday search page) over marketing pages. Search or filter it for the functions in `criteria.functions`, in the criteria locations or remote.
 3. Collect matching postings: title, location, work mode, URL, external id if visible, pay if listed, posted date, and the description text (trim boilerplate; keep up to about 6,000 characters).
 4. `PATCH` the company with `{"scanned": true}` when done, even if nothing matched.
 
-Stop scanning careers sites after about 45 minutes and leave the rest for the next run; `companies_due` will still list them.
+Spend up to about 60 minutes on careers sites. Finish every **high-priority** company before you stop. Leave any normal ones you don't get to for the next run; `companies_due` will still list them.
 
 **LinkedIn.**
 
 1. Open the Job tracker (My Jobs). For **Saved**, **In Progress**, **Applied** and **Interview**, read each item's company, title, location and status. Post them with `source: "linkedin"` and `linkedin_status` set to `saved`, `in_progress`, `applied` or `interview`. Items already in the app just update.
 2. Run each of `criteria.broad_searches` for the last `criteria.lookback_days` days, combined with the functions and locations (remote first). Human pace (hard rule 5).
-3. Open promising results to capture the description and pay.
+3. Open promising results to capture the description and pay. Open results from watchlist companies first (any name in `watchlist_companies`, `high` ones before the rest). Only post jobs from companies outside the watchlist when they're a clear match.
 
 **Post** everything found with `POST /api/agent/jobs` in batches. You may include `fit_score` and `fit_reasons` straight away (see Phase C) or post without them and score in Phase C.
 
@@ -91,12 +93,12 @@ Stop scanning careers sites after about 45 minutes and leave the rest for the ne
 
 **Score** every job in `jobs_needing_score` (re-fetch the context first), plus any you found this run without a score:
 
-- 0–100 against the criteria: function match (most weight), seniority fit for the profile, location (Seattle/Boston > LA/Chicago/DC > elsewhere; remote is top), pay vs `min_base` if both are known, and the company's priority.
+- 0–100 against the criteria: function match (most weight), seniority fit for the profile, location (Seattle/Boston > LA/Chicago/DC > elsewhere; remote is top), pay vs `min_base` if both are known, and the company. Each job's `watchlist` field says where its company stands: `high` (red on the watchlist) is worth up to +10, `watchlist` up to +5, and `off_watchlist` gets no bonus. A weak role doesn't become a match just because of the company.
 - Use `skip_feedback`: postings like ones the user skipped should score lower for the same reason.
 - Give exactly 3 short reasons (under 12 words each), the most decisive first. Mention a real concern if there is one.
 - Send the score by re-posting the job (same company, title and location) with `fit_score` and `fit_reasons`. The server closes anything under threshold as `low_fit` so it's never re-scored. A job keeps its first score.
 
-**Prepare** each job in `jobs_needing_materials` (re-fetch the context after scoring):
+**Prepare** each job in `jobs_needing_materials` (re-fetch the context after scoring). The list is sorted with watchlist companies first, so work down it in order; if time runs out, the off-watchlist jobs are the ones that wait:
 
 1. Pick the document: the **resume** for corporate, finance, tech and fintech roles; the **CV** for think tanks, universities, international organizations (OECD, World Bank, IMF, UN), and health or research roles.
 2. Start from `profile.resume_text` / `profile.cv_text`. If it's empty, read the source PDF at `profile.resume_source_file` / `cv_source_file`. Tailor by reordering and rewording existing bullets toward the posting. **Do not add facts, numbers, titles or dates that aren't in the source or the profile.** The resume must stay one page (about 450–550 words); the CV may stay at three.

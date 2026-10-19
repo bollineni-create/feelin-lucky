@@ -2,7 +2,7 @@ import path from "node:path";
 import { and, asc, eq, inArray, isNotNull, isNull, or, lt } from "drizzle-orm";
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
-import { OPEN_STAGES, autoAppliedToday, autoApplyCandidates, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, type AppWithJob } from "@/lib/logic";
+import { OPEN_STAGES, autoAppliedToday, byWatchlistThenScore, autoApplyCandidates, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ const { companies, applications } = schema;
 
 export const GET = agentRoute(async (req) => {
   const url = new URL(req.url);
-  const companyLimit = Math.min(Number(url.searchParams.get("companies_limit") ?? 30) || 30, 200);
+  const companyLimit = Math.min(Number(url.searchParams.get("companies_limit") ?? 40) || 40, 200);
 
   sweepFollowUps();
   const criteria = getCriteria();
@@ -31,6 +31,11 @@ export const GET = agentRoute(async (req) => {
     .all();
   // Never-scanned first (NULLs sort first), then oldest scan; high priority ahead of normal. Array.sort is stable.
   companiesDue.sort((a, b) => (a.priority === b.priority ? 0 : a.priority === "high" ? -1 : 1));
+  // Every due high-priority company goes out, whatever the limit. Normal ones fill the rest, but always
+  // at least a few so they still rotate through when there are more red companies than the limit.
+  const dueHigh = companiesDue.filter((c) => c.priority === "high");
+  const dueNormal = companiesDue.filter((c) => c.priority !== "high");
+  const companiesToScan = [...dueHigh, ...dueNormal.slice(0, Math.max(10, companyLimit - dueHigh.length))];
 
   const toSubmit = (a: AppWithJob) => ({
     application_id: a.id,
@@ -64,7 +69,8 @@ export const GET = agentRoute(async (req) => {
     next_action: a.nextAction,
   }));
 
-  const found = listApplications(eq(applications.stage, "found"));
+  const found = listApplications(eq(applications.stage, "found")).sort(byWatchlistThenScore);
+  const watchlist = (a: AppWithJob) => ["high", "watchlist", "off_watchlist"][watchTier(a)];
   const needsScore = found.filter((a) => a.job.fitScore == null);
   const needsMaterials = found.filter((a) => a.job.fitScore != null && !hasMaterials(a) && a.job.fitScore >= thresholdFor(a.job.companyId));
 
@@ -106,7 +112,7 @@ export const GET = agentRoute(async (req) => {
       document_rule:
         "Resume for corporate, finance, tech and fintech roles. CV for think tanks, universities, international organizations (OECD, World Bank, IMF, UN) and health or research roles.",
     },
-    companies_due: companiesDue.slice(0, companyLimit).map((c) => ({
+    companies_due: companiesToScan.map((c) => ({
       company_id: c.id,
       name: c.name,
       categories: c.categories,
@@ -117,6 +123,13 @@ export const GET = agentRoute(async (req) => {
       last_scanned_at: c.lastScannedAt,
     })),
     companies_due_total: companiesDue.length,
+    // The whole watchlist (not paused), so LinkedIn results can be checked against it.
+    watchlist_companies: db
+      .select({ name: companies.name, priority: companies.priority })
+      .from(companies)
+      .where(inArray(companies.priority, ["high", "normal"]))
+      .orderBy(asc(companies.name))
+      .all(),
     approved_to_submit: profile.confirmed ? approved : [],
     auto_apply: {
       enabled: criteria.autoApply && profile.confirmed,
@@ -133,11 +146,12 @@ export const GET = agentRoute(async (req) => {
         ? "Profile is not confirmed in Settings. Do not fill or submit any application; report this in the run errors."
         : null,
     open_applications: open,
-    jobs_needing_score: needsScore.map((a) => ({ job_id: a.jobId, application_id: a.id, company: a.job.companyName, title: a.job.title, url: a.job.url, location: a.job.location })),
+    jobs_needing_score: needsScore.map((a) => ({ job_id: a.jobId, application_id: a.id, company: a.job.companyName, watchlist: watchlist(a), title: a.job.title, url: a.job.url, location: a.job.location })),
     jobs_needing_materials: needsMaterials.map((a) => ({
       job_id: a.jobId,
       application_id: a.id,
       company: a.job.companyName,
+      watchlist: watchlist(a),
       title: a.job.title,
       url: a.job.url,
       fit_score: a.job.fitScore,
