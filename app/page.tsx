@@ -4,7 +4,7 @@ import { db, schema } from "@/lib/db";
 import { activeRun, getCriteria, latestRuns, runActivity, listApplications, queueItems, sweepFollowUps, type AppWithJob } from "@/lib/logic";
 import { fmtDate, fmtDateTime, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { RunButton } from "@/components/RunButton";
-import { runNow } from "./actions";
+import { runNow, stopRun } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -106,7 +106,11 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
           <Link className="btn btn-primary" href="/queue">
             Review {queue.length} new {queue.length === 1 ? "match" : "matches"}
           </Link>
-          <RunButton action={runNow} label="Run scan now" pendingLabel="Starting…" disabled={Boolean(running)} />
+          {running ? (
+            <RunButton action={stopRun} label={`Stop run #${running.id}`} pendingLabel="Stopping…" doneMessage="Stopped." />
+          ) : (
+            <RunButton action={runNow} label="Run scan now" pendingLabel="Starting…" />
+          )}
         </div>
       </div>
 

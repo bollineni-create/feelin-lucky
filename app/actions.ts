@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { db, schema } from "@/lib/db";
 import { changeStage, getApplication, hasMaterials, iso, logEvent } from "@/lib/logic";
 import { renderMaterials } from "@/lib/render";
-import { startAgentRun } from "@/lib/runner";
+import { startAgentRun, stopAgentRun } from "@/lib/runner";
 import { HIGHLIGHTS, PRIORITIES, SOURCES, STAGES, type Highlight, type Priority, type Stage, type WorkEntry, type EducationEntry, type BroadSearch, type Source } from "@/db/schema";
 
 const refresh = () => {
@@ -52,6 +52,14 @@ export async function undoApplication(appId: number) {
 
 export async function runNow() {
   const r = startAgentRun("all", "manual");
+  refresh();
+  return r;
+}
+
+export async function stopRun() {
+  const r = stopAgentRun();
+  // Give the script a moment to close the run record before the page re-renders.
+  await new Promise((done) => setTimeout(done, 1500));
   refresh();
   return r;
 }

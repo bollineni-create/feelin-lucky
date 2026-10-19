@@ -2,12 +2,13 @@
 
 import { useState, useTransition } from "react";
 
-export function RunButton({ action, label, pendingLabel, primary, disabled }: {
+export function RunButton({ action, label, pendingLabel, primary, disabled, doneMessage = "Started — watch Chrome. The run log updates as it goes." }: {
   action: () => Promise<{ ok: true } | { ok: false; error: string }>;
   label: string;
   pendingLabel: string;
   primary?: boolean;
   disabled?: boolean;
+  doneMessage?: string;
 }) {
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
@@ -20,7 +21,7 @@ export function RunButton({ action, label, pendingLabel, primary, disabled }: {
         onClick={() =>
           start(async () => {
             const r = await action();
-            setMsg(r.ok ? "Started — watch Chrome. The run log updates as it goes." : r.error);
+            setMsg(r.ok ? doneMessage : r.error);
           })
         }
       >

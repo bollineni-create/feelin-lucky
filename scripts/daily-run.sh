@@ -42,13 +42,21 @@ log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
 # One run at a time.
 LOCK="logs/.run.lock"
 if ! mkdir "$LOCK" 2>/dev/null; then
-  if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +$((MAX_MINUTES + 10)) 2>/dev/null)" ]; then
+  # Take over a lock whose run was killed outright (its pid is gone), or one older than any run can be.
+  OLD_PID="$(cat "$LOCK/pid" 2>/dev/null)"
+  if { [ -n "$OLD_PID" ] && ! ps -o stat= -p "$OLD_PID" 2>/dev/null | grep -qv Z; } \
+    || [ -n "$(find "$LOCK" -maxdepth 0 -mmin +$((MAX_MINUTES + 10)) 2>/dev/null)" ]; then
     rm -rf "$LOCK" && mkdir "$LOCK"
   else
     log "Another run holds $LOCK; exiting."; exit 0
   fi
 fi
 trap 'rm -rf "$LOCK"' EXIT
+# The app reads this to tell a live run from one whose process is gone, and to stop it.
+echo $$ > "$LOCK/pid"
+RUN_ID=""
+CLAUDE_PID=""
+WATCHDOG=""
 
 json_field() { python3 -c "import json,sys; print(json.load(sys.stdin)$1)" 2>/dev/null; }
 
@@ -59,6 +67,7 @@ fi
 
 RUN_ID="$(agent/api.sh POST /api/agent/runs "{\"phase\":\"$PHASE\",\"trigger\":\"$TRIGGER\",\"log_path\":\"$ROOT/$LOG\"}" | json_field "['run_id']")"
 if [ -z "$RUN_ID" ]; then log "Could not create a run record."; exit 1; fi
+echo "$RUN_ID" > "$LOCK/run_id"
 log "Run #$RUN_ID · phases: $PHASE · trigger: $TRIGGER"
 
 fail_run() {
@@ -66,6 +75,19 @@ fail_run() {
   python3 -c 'import json,sys; print(json.dumps({"status":"failed","errors":[sys.argv[1]]}))' "$1" > "logs/tmp/fail-$RUN_ID.json"
   agent/api.sh PATCH "/api/agent/runs/$RUN_ID" "logs/tmp/fail-$RUN_ID.json" >/dev/null 2>&1 || true
 }
+
+# Stopped from the app (Stop run), by launchd, or by a logout: stop the agent too and close the run, so it
+# doesn't sit at "running" in the run log.
+on_signal() {
+  trap - TERM INT HUP
+  [ -n "$WATCHDOG" ] && kill "$WATCHDOG" 2>/dev/null
+  [ -n "$CLAUDE_PID" ] && kill -TERM "$CLAUDE_PID" 2>/dev/null
+  fail_run "Stopped before it finished ($1)"
+  exit 143
+}
+trap 'on_signal "stopped"' TERM
+trap 'on_signal "interrupted"' INT
+trap 'on_signal "hung up"' HUP
 
 if ! command -v claude >/dev/null 2>&1; then fail_run "claude CLI not found on PATH"; exit 1; fi
 if ! claude --help 2>/dev/null | grep -q -- "$CHROME_FLAG"; then
