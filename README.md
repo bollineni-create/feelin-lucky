@@ -7,6 +7,10 @@ A local app that tracks the job search, plus a daily Claude Code agent that find
 
 ## Setup (Mac)
 
+**Easiest:** download this repo (green **Code** button → **Download ZIP**, or `git clone`), move the folder somewhere it'll stay (e.g. Documents), and double-click **`Install Job Hunt.command`**. If macOS says it can't verify the developer, right-click it → **Open** → **Open**. It installs everything, keeps the app running in the background, schedules the weekday 7:00 AM agent run, and puts **Job Hunt.app** in `~/Applications` (find it with Spotlight, Launchpad, or drag it to the Dock). Double-clicking Job Hunt starts the server if needed and opens the app in your browser. Run the installer again after pulling updates. If you move the folder, run it again from the new place.
+
+Manual setup:
+
 ```bash
 npm install
 npm run setup          # writes AGENT_TOKEN to .env, creates the DB, seeds 134 companies + the LinkedIn tracker
