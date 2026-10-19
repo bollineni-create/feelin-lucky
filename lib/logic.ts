@@ -90,6 +90,14 @@ export function sweepFollowUps() {
 
 export type AppWithJob = Application & { job: Job; companyHighlight: string | null; companyPriority: string | null; atsType: string | null };
 
+/** Watchlist rank: high-priority (red) companies 0, other watchlist companies 1, everyone else 2. */
+export function watchTier(a: Pick<AppWithJob, "companyPriority">) {
+  return a.companyPriority === "high" ? 0 : a.companyPriority === "normal" ? 1 : 2;
+}
+
+/** Watchlist companies first, then fit score. */
+export const byWatchlistThenScore = (x: AppWithJob, y: AppWithJob) => watchTier(x) - watchTier(y) || (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0);
+
 export function listApplications(where?: ReturnType<typeof and>): AppWithJob[] {
   const rows = db
     .select({ app: applications, job: jobs, hl: companies.highlight, pr: companies.priority, ats: companies.atsType })
@@ -123,7 +131,7 @@ export function queueItems() {
     })
     .sort((x, y) => {
       const order = (a: AppWithJob) => (a.stage === "found" ? 0 : a.stage === "approved" ? 1 : 2);
-      return order(x) - order(y) || (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0);
+      return order(x) - order(y) || byWatchlistThenScore(x, y);
     });
 }
 
@@ -158,14 +166,14 @@ export function autoAppliedToday() {
     .get()!.n;
 }
 
-/** Found applications the agent may submit without a Queue approval, best first, within today's cap. */
+/** Found applications the agent may submit without a Queue approval, watchlist companies first, within today's cap. */
 export function autoApplyCandidates(): AppWithJob[] {
   const c = getCriteria();
   if (!c.autoApply) return [];
   const remaining = Math.max(0, c.autoApplyDailyCap - autoAppliedToday());
   return listApplications(eq(applications.stage, "found"))
     .filter((a) => autoApplyBlocker(a) == null)
-    .sort((x, y) => (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0))
+    .sort(byWatchlistThenScore)
     .slice(0, remaining);
 }
 
