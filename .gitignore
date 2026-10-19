@@ -8,3 +8,4 @@ data/*
 !data/.gitkeep
 logs/
 .DS_Store
+.node/

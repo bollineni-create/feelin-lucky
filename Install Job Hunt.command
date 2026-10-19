@@ -10,11 +10,25 @@ step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 finish() { echo; read -r -p "Press Return to close this window." _ || true; }
 trap finish EXIT
 
+# Use Node.js if it's already here (PATH, nvm, Volta, or a copy from an earlier install);
+# otherwise download the official Node.js 22 LTS into .node/ in this folder. No admin password needed.
+NVM_NODE="$(ls -d "$HOME"/.nvm/versions/node/v*/bin 2>/dev/null | sort -V | tail -1 || true)"
+export PATH="$PWD/.node/bin:$HOME/.volta/bin:${NVM_NODE:+$NVM_NODE:}$PATH"
 if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js isn't installed. Opening nodejs.org — install the LTS version, then double-click this file again."
-  open "https://nodejs.org/en/download"
-  exit 1
+  step "Downloading Node.js (one time, about 50 MB)"
+  case "$(uname -m)" in arm64) ARCH=arm64 ;; *) ARCH=x64 ;; esac
+  OS="${NODE_OS:-darwin}"
+  BASE="https://nodejs.org/dist/latest-v22.x"
+  SUMS="$(curl -fsSL "$BASE/SHASUMS256.txt")"
+  FILE="$(printf '%s\n' "$SUMS" | awk -v f="-$OS-$ARCH.tar.gz" '$2 ~ f"$" {print $2}')"
+  [ -n "$FILE" ] || { echo "Couldn't find a Node.js download for $OS-$ARCH."; exit 1; }
+  TMP="$(mktemp -d)"
+  curl -fL --progress-bar "$BASE/$FILE" -o "$TMP/$FILE"
+  (cd "$TMP" && printf '%s\n' "$SUMS" | grep " $FILE\$" | shasum -a 256 -c -) || { echo "Download checksum didn't match; try again."; exit 1; }
+  rm -rf .node && mkdir .node && tar -xzf "$TMP/$FILE" -C .node --strip-components 1
+  rm -rf "$TMP"
 fi
+echo "Using Node.js $(node -v) from $(dirname "$(command -v node)")"
 
 step "Installing dependencies (a few minutes the first time)"
 npm install
