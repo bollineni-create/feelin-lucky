@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { ApiError, agentRoute, intParam, parseBody } from "@/lib/agent-auth";
-import { iso } from "@/lib/logic";
+import { iso, runActivity } from "@/lib/logic";
 
 const Body = z.object({
   status: z.enum(["running", "ok", "failed"]).optional(),
@@ -36,5 +36,5 @@ export const PATCH = agentRoute(async (req, params) => {
 export const GET = agentRoute(async (_req, params) => {
   const run = db.select().from(schema.runs).where(eq(schema.runs.id, intParam(params.id))).get();
   if (!run) throw new ApiError(404, "run not found");
-  return { run };
+  return { run, activity: runActivity(run) };
 });

@@ -37,7 +37,7 @@ scripts/daily-run.sh                        # all phases: submit → find → pr
 
 Requirements: Claude Code signed in, with Chrome open and the Claude in Chrome extension connected. The script checks `claude --help` for `--chrome`. If your version names it differently, set `CLAUDE_CHROME_FLAG` in `.env`. If the Chrome tools aren't named `mcp__claude-in-chrome__*` (check `/mcp` inside `claude --chrome`), set `CHROME_MCP_PREFIX`. For confirmation screenshots, give your terminal (and `/bin/bash` for launchd) Screen Recording permission. Without it, the agent saves the confirmation text instead.
 
-Each run gets a row in the Pipeline's run log and a full transcript in `logs/run-*.log`. Runs are capped at 120 minutes (`JOBHUNT_MAX_MINUTES`), and only one runs at a time.
+Each run gets a row in the Pipeline's run log, a summary in `logs/run-*.log` (the agent's closing message, how many of each tool it called, and any tool calls that were refused) and a full transcript of every step in `logs/run-*.jsonl`. The run log also shows what the app itself recorded for the run (companies marked scanned, new jobs by source), separate from the counts the agent reports. A run that included the find phase but scanned no company and posted no job is marked failed, so a run that didn't search can't show up as ok. Runs are capped at 120 minutes (`JOBHUNT_MAX_MINUTES`), and only one runs at a time.
 
 ### Schedule
 

@@ -189,3 +189,27 @@ export function activeRun() {
     .where(and(eq(runs.status, "running"), sql`${runs.startedAt} > ${iso(new Date(Date.now() - 3 * 3_600_000))}`))
     .get();
 }
+
+/** What the database shows a run actually did, independent of the counts the agent reports about itself. */
+export function runActivity(run: Pick<typeof runs.$inferSelect, "startedAt" | "finishedAt">) {
+  const from = run.startedAt;
+  const to = run.finishedAt ?? iso();
+  const scanned = db
+    .select({ n: sql<number>`count(*)` })
+    .from(companies)
+    .where(and(sql`${companies.lastScannedAt} >= ${from}`, sql`${companies.lastScannedAt} <= ${to}`))
+    .get()!.n;
+  const found = db
+    .select({ source: jobs.source, n: sql<number>`count(*)` })
+    .from(jobs)
+    .where(and(sql`${jobs.firstSeenAt} >= ${from}`, sql`${jobs.firstSeenAt} <= ${to}`))
+    .groupBy(jobs.source)
+    .all();
+  const bySource = Object.fromEntries(found.map((r) => [r.source, r.n]));
+  return {
+    companies_scanned: scanned,
+    jobs_found: found.reduce((s, r) => s + r.n, 0),
+    jobs_found_careers: bySource.careers ?? 0,
+    jobs_found_linkedin: bySource.linkedin ?? 0,
+  };
+}

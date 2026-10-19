@@ -35,6 +35,8 @@ CHROME_TOOLS="${CHROME_MCP_PREFIX:-mcp__claude-in-chrome}"
 mkdir -p logs/tmp
 STAMP="$(date +%Y%m%d-%H%M%S)"
 LOG="logs/run-$STAMP.log"
+# Every tool call and message the agent makes, one JSON event per line, so a run can be checked afterwards.
+TRANSCRIPT="logs/run-$STAMP.jsonl"
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
 
 # One run at a time.
@@ -82,9 +84,10 @@ ALLOWED="Read,Glob,Grep,Edit(logs/tmp/**),Bash(agent/api.sh:*),Bash(screencaptur
 
 log "Starting Claude Code (max ${MAX_MINUTES}m)…"
 claude -p "$PROMPT" "$CHROME_FLAG" \
+  --output-format stream-json --verbose \
   --allowedTools "$ALLOWED" \
   --disallowedTools "WebFetch,Bash(curl:*),Bash(rm:*),Bash(git:*)" \
-  >>"$LOG" 2>&1 &
+  >"$TRANSCRIPT" 2>>"$LOG" &
 CLAUDE_PID=$!
 
 # Watchdog: macOS has no `timeout` by default.
@@ -94,11 +97,38 @@ wait "$CLAUDE_PID"
 CODE=$?
 kill "$WATCHDOG" 2>/dev/null || true
 
-STATUS="$(agent/api.sh GET "/api/agent/runs/$RUN_ID" 2>/dev/null | json_field "['run']['status']")"
+# The agent's closing summary, then how many tool calls it made and which ones were refused.
+python3 - "$TRANSCRIPT" >>"$LOG" 2>/dev/null <<'PY' || true
+import json, sys, collections
+tools, denied, result = collections.Counter(), [], None
+for line in open(sys.argv[1]):
+    try: e = json.loads(line)
+    except ValueError: continue
+    if e.get("type") == "assistant":
+        for c in e.get("message", {}).get("content", []):
+            if c.get("type") == "tool_use": tools[c["name"].split("__")[-1]] += 1
+    elif e.get("type") == "result":
+        result = e.get("result")
+        denied = [d.get("tool_name") for d in e.get("permission_denials") or []]
+print("--- agent summary ---")
+print(result or "(no final message)")
+print("--- tool calls:", ", ".join(f"{n}×{k}" for k, n in tools.most_common()) or "none")
+if denied: print("--- refused tool calls:", ", ".join(collections.Counter(denied)))
+PY
+
+RUN_JSON="$(agent/api.sh GET "/api/agent/runs/$RUN_ID" 2>/dev/null)"
+STATUS="$(echo "$RUN_JSON" | json_field "['run']['status']")"
+SCANNED="$(echo "$RUN_JSON" | json_field "['activity']['companies_scanned']")"
+FOUND="$(echo "$RUN_JSON" | json_field "['activity']['jobs_found']")"
+log "Recorded by the app: ${SCANNED:-?} companies scanned, ${FOUND:-?} new jobs"
 if [ "$STATUS" = "running" ]; then
   if [ "$CODE" -eq 143 ]; then fail_run "Stopped after ${MAX_MINUTES} minutes"
   else fail_run "Agent exited (code $CODE) without closing the run; see $LOG"; fi
+elif [[ ",$PHASE," == *",find,"* && "$STATUS" = "ok" && "${SCANNED:-0}" = "0" && "${FOUND:-0}" = "0" ]]; then
+  # A find phase that marked no company scanned and posted no job didn't search, whatever the agent reported.
+  fail_run "Find phase recorded no scanned companies and no jobs; the agent didn't search. See $TRANSCRIPT"
 else
   log "Run #$RUN_ID finished: $STATUS (exit $CODE)"
 fi
 find logs/tmp -type f -mtime +14 -delete 2>/dev/null || true
+find logs -maxdepth 1 -name "run-*.jsonl" -mtime +30 -delete 2>/dev/null || true

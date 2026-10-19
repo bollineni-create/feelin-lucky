@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { count, desc, eq, ne } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { activeRun, getCriteria, latestRuns, listApplications, queueItems, sweepFollowUps, type AppWithJob } from "@/lib/logic";
+import { activeRun, getCriteria, latestRuns, runActivity, listApplications, queueItems, sweepFollowUps, type AppWithJob } from "@/lib/logic";
 import { fmtDate, fmtDateTime, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { RunButton } from "@/components/RunButton";
 import { runNow } from "./actions";
@@ -35,6 +35,11 @@ function nextText(a: AppWithJob) {
   if (a.stage === "applied") return "Watch portal for a response";
   if (a.stage === "closed") return `Archived: ${(a.closedReason ?? "closed").replace(/_/g, " ")}`;
   return null;
+}
+
+function activityText(a: ReturnType<typeof runActivity>) {
+  const jobs = a.jobs_found ? `${a.jobs_found} new jobs (${a.jobs_found_careers} careers, ${a.jobs_found_linkedin} LinkedIn)` : "no new jobs";
+  return `Recorded: ${a.companies_scanned} companies scanned · ${jobs}`;
 }
 
 function whenLabel(iso: string) {
@@ -238,6 +243,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                               .join(" · ")}
                           </div>
                         ) : null}
+                        <div className="muted">{activityText(runActivity(r))}</div>
                         {r.errors?.length ? <div className="status-failed">{r.errors.slice(0, 2).join("; ")}</div> : null}
                       </td>
                     </tr>
