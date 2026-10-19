@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         window.title = "Lodestar"
+        window.isReleasedWhenClosed = false   // closing only hides it, so the Dock icon can bring it back
         window.minSize = NSSize(width: 720, height: 520)
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.backgroundColor = .windowBackgroundColor
@@ -172,7 +173,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         completionHandler(alert.runModal() == .alertFirstButtonReturn)
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    // The red button closes the window but keeps the app running; clicking the Dock icon reopens it. Cmd-Q quits.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { window.makeKeyAndOrderFront(nil) }
+        return true
+    }
 
     // MARK: Menu
 
