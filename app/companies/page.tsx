@@ -12,13 +12,12 @@ export const dynamic = "force-dynamic";
 export default async function CompaniesPage({ searchParams }: { searchParams: Promise<{ category?: string; highlighted?: string }> }) {
   const sp = await searchParams;
   const highlightedOnly = sp.highlighted === "1";
-  const all = db.select().from(schema.companies).orderBy(asc(schema.companies.name)).all();
+  const all = db.select().from(schema.companies).orderBy(asc(schema.companies.id)).all();
   const categories = [...new Set([...CATEGORIES, ...all.flatMap((c) => c.categories)])];
   const active = sp.category && categories.includes(sp.category) ? sp.category : null;
-  const visible = all.filter((c) => (!highlightedOnly || c.highlight) && (!active || c.categories.includes(active)));
   const criteria = getCriteria();
 
-  const qs = (p: { category?: string | null; highlighted?: boolean }) => {
+  const href = (p: { category?: string | null; highlighted?: boolean }) => {
     const u = new URLSearchParams();
     const cat = p.category === undefined ? active : p.category;
     const hl = p.highlighted === undefined ? highlightedOnly : p.highlighted;
@@ -28,139 +27,114 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
     return s ? `/companies?${s}` : "/companies";
   };
 
-  const groups = (active ? [active] : categories).map((cat) => ({ cat, items: visible.filter((c) => c.categories.includes(cat)) })).filter((g) => g.items.length);
+  const groups = (active ? [active] : categories)
+    .map((cat) => ({ cat, items: all.filter((c) => c.categories.includes(cat) && (!highlightedOnly || c.highlight)) }))
+    .filter((g) => g.items.length);
 
   return (
-    <>
+    <div className="stack" style={{ gap: 24 }}>
       <div className="page-head">
         <div>
-          <div className="eyebrow">{all.length} companies</div>
           <h1>Company watchlist</h1>
-          <p className="sub">Red is high priority and scanned daily; everything else every 3 days. Paused companies are skipped.</p>
+          <p className="sub">
+            <span className="num">{all.length}</span> companies in <span className="num">{categories.length}</span> categories · <span className="num">{all.filter((c) => c.highlight).length}</span> highlighted
+          </p>
+        </div>
+        <div className="legend" aria-label="Highlight legend">
+          <span>
+            <Hl color="red" />
+            Red: high priority
+          </span>
+          <span>
+            <Hl color="teal" />
+            Teal
+          </span>
+          <span>
+            <Hl color="blue" />
+            Blue
+          </span>
+          <span>
+            <Hl color="orange" />
+            Orange
+          </span>
         </div>
       </div>
 
-      <div className="grid-main">
-        <section aria-label="Companies">
-          <div className="toolbar">
-            <div className="pills" role="group" aria-label="Category">
-              <Link className="pill" href={qs({ category: null })} aria-current={!active ? "true" : undefined}>
-                All <span className="n">{all.filter((c) => !highlightedOnly || c.highlight).length}</span>
-              </Link>
-              {categories.map((cat) => {
-                const n = all.filter((c) => c.categories.includes(cat) && (!highlightedOnly || c.highlight)).length;
-                return (
-                  <Link key={cat} className="pill" href={qs({ category: cat })} aria-current={active === cat ? "true" : undefined}>
-                    {cat} <span className="n">{n}</span>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-          <div className="toolbar">
-            <Link className="toggle" href={qs({ highlighted: !highlightedOnly })} aria-pressed={highlightedOnly} role="switch" aria-checked={highlightedOnly}>
-              <span className="sw" aria-hidden /> Highlighted only
-            </Link>
-            <div className="legend" aria-label="Highlight legend">
-              <span>
-                <Hl color="red" /> High priority
-              </span>
-              <span>
-                <Hl color="teal" /> Teal
-              </span>
-              <span>
-                <Hl color="blue" /> Blue
-              </span>
-              <span>
-                <Hl color="orange" /> Orange
-              </span>
-            </div>
-          </div>
+      <div className="filters" role="group" aria-label="Filter categories">
+        <Link className="fbtn" href={href({ category: null })} aria-pressed={!active}>
+          All
+        </Link>
+        {categories.map((cat) => (
+          <Link key={cat} className="fbtn" href={href({ category: cat })} aria-pressed={active === cat}>
+            {cat}
+          </Link>
+        ))}
+        <Link className="fbtn" href={href({ highlighted: !highlightedOnly })} aria-pressed={highlightedOnly}>
+          Highlighted only
+        </Link>
+      </div>
 
-          {groups.map(({ cat, items }) => (
-            <div className="cat" key={cat}>
-              <h3>
-                {cat} <span className="mono small muted">{items.length}</span>
-              </h3>
-              <div className="chips">
-                {items.map((c) => (
+      <div className="cats">
+        {groups.map(({ cat, items }) => (
+          <section className="cat" key={cat} aria-labelledby={`cat-${cat}`}>
+            <div className="cat-head">
+              <h2 id={`cat-${cat}`}>{cat}</h2>
+              <span className="n">{items.length}</span>
+            </div>
+            <ul className="chips">
+              {items.map((c) => (
+                <li key={c.id}>
                   <Link
-                    key={c.id}
                     href={`/companies/${c.id}`}
-                    className={`chip ${c.priority === "paused" ? "paused" : ""}`}
-                    title={`${c.priority} priority · scanned ${ago(c.lastScannedAt)}${c.careersUrl ? ` · ${c.careersUrl}` : ""}`}
+                    className={`chip ${c.highlight ? "flagged" : ""} ${c.priority === "paused" ? "paused" : ""}`}
+                    title={`${c.priority} priority · scanned ${ago(c.lastScannedAt)}`}
                   >
                     <Hl color={c.highlight} />
-                    {c.name}
+                    <span>{c.name}</span>
                     {c.atsType ? <span className="ats">{c.atsType}</span> : null}
                   </Link>
-                ))}
-              </div>
-            </div>
-          ))}
-          {groups.length === 0 ? <p className="muted">No companies match.</p> : null}
-        </section>
-
-        <aside>
-          <section className="panel">
-            <h2>Add company</h2>
-            <form action={addCompany}>
-              <div className="field">
-                <label htmlFor="name">Name</label>
-                <input className="input" id="name" name="name" required />
-              </div>
-              <div className="row2">
-                <div className="field">
-                  <label htmlFor="category">Category</label>
-                  <select className="input" id="category" name="category" defaultValue={active ?? "Other"}>
-                    {categories.map((c) => (
-                      <option key={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label htmlFor="highlight">Highlight</label>
-                  <select className="input" id="highlight" name="highlight" defaultValue="">
-                    <option value="">None</option>
-                    <option value="red">Red (high priority)</option>
-                    <option value="teal">Teal</option>
-                    <option value="blue">Blue</option>
-                    <option value="orange">Orange</option>
-                  </select>
-                </div>
-              </div>
-              <div className="field">
-                <label htmlFor="careers_url">Careers page (optional)</label>
-                <input className="input" id="careers_url" name="careers_url" type="url" placeholder="The agent finds it if empty" />
-              </div>
-              <button className="btn btn-primary" type="submit">
-                Add company
-              </button>
-            </form>
-          </section>
-
-          <section className="panel">
-            <h2>Broad searches</h2>
-            <p className="small secondary" style={{ marginBottom: 10 }}>
-              Run on LinkedIn each day for the last {criteria.lookbackDays} days.
-            </p>
-            <ul className="feed">
-              {criteria.broadSearches.map((b) => (
-                <li key={b.label}>
-                  <span className="mark status_change" aria-hidden />
-                  <div>
-                    <div className="t">{b.label}</div>
-                    {b.query !== b.label ? <div className="d">{b.query}</div> : null}
-                  </div>
                 </li>
               ))}
             </ul>
-            <Link href="/settings#criteria" className="btn btn-sm" style={{ marginTop: 8 }}>
-              Edit searches
-            </Link>
           </section>
-        </aside>
+        ))}
+        {groups.length === 0 ? <p className="muted">No companies match.</p> : null}
       </div>
-    </>
+
+      <div className="addrow">
+        <form action={addCompany} className="panel addform">
+          <h2>Add a company</h2>
+          <div className="field">
+            <label htmlFor="co-name">Company</label>
+            <input className="input" id="co-name" name="name" required />
+          </div>
+          <div className="field" style={{ flexBasis: 180 }}>
+            <label htmlFor="co-cat">Category</label>
+            <select className="input" id="co-cat" name="category" defaultValue={active ?? "Tech"}>
+              {categories.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+          <button className="btn btn-primary" type="submit">
+            Add to watchlist
+          </button>
+        </form>
+        <div className="panel-dark">
+          <h2>Broad searches</h2>
+          <p className="fine" style={{ fontSize: 13, marginBottom: 10 }}>
+            Run daily on LinkedIn Jobs beyond the named list.
+          </p>
+          <ul>
+            {criteria.broadSearches.map((b) => (
+              <li key={b.label}>{b.label}</li>
+            ))}
+          </ul>
+          <Link href="/settings#criteria" style={{ display: "inline-block", marginTop: 12, fontSize: 14, fontWeight: 500 }}>
+            Edit searches
+          </Link>
+        </div>
+      </div>
+    </div>
   );
 }

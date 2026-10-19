@@ -24,3 +24,9 @@ export function ago(iso: string | null | undefined) {
 
 export const sourceLabel = (s: string) => (s === "linkedin" ? "LinkedIn" : "Careers site");
 export const modeLabel = (m: string | null) => (m ? m[0].toUpperCase() + m.slice(1) : null);
+
+/** "Los Angeles, CA" → "LA", "Seattle, WA" → "Seattle" for compact criteria lines. */
+export function shortCity(l: string) {
+  const city = l.replace(/,\s*[A-Z]{2}$/, "").trim();
+  return ({ "Los Angeles": "LA", Washington: "DC", "Washington DC": "DC" } as Record<string, string>)[city] ?? city;
+}

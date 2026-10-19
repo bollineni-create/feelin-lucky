@@ -93,8 +93,8 @@ export const SEED_CRITERIA = {
     { label: "Remote jobs", query: "Remote roles matching the functions" },
     { label: "Startups", query: "Startup roles matching the functions (Series A–D)" },
     { label: "Growing brands", query: "Fast-growing consumer and tech brands" },
-    { label: "Companies with perks", query: "Travel, entertainment, luxury goods and government employers" },
-    { label: "Government agencies & military companies", query: "Federal agencies, defense primes and military contractors" },
+    { label: "Companies with perks: travel, entertainment, luxury goods, government", query: "Employers known for travel, entertainment, luxury-goods or government perks" },
+    { label: "Government agencies and military companies", query: "Federal agencies, defense primes and military contractors" },
   ] satisfies BroadSearch[],
   notes:
     "Remote is top priority; hybrid or onsite acceptable. Seattle and Boston first; LA, Chicago and DC also considered. Open beyond treasury.",
