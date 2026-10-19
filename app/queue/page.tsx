@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { activeRun, getCriteria, getProfile, iso, queueItems, type AppWithJob } from "@/lib/logic";
+import { activeRun, autoApplyCandidates, getCriteria, getProfile, iso, queueItems, type AppWithJob } from "@/lib/logic";
 import { fmtDate, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { Hl } from "@/components/Hl";
 import { RunButton } from "@/components/RunButton";
@@ -26,6 +26,7 @@ export default function QueuePage() {
   const profile = getProfile();
   const criteria = getCriteria();
   const running = activeRun();
+  const autoIds = new Set(autoApplyCandidates().map((a) => a.id));
 
   const modes = criteria.workModes;
   const criteriaLines = [
@@ -34,6 +35,7 @@ export default function QueuePage() {
     criteria.functions.map((f, i) => (i ? f.toLowerCase() : f)).join(", "),
     `Minimum base: ${criteria.minBase ? `$${criteria.minBase.toLocaleString("en-US")}` : "[YOUR FLOOR]"}`,
     `Fit score of ${criteria.fitThreshold} or higher (${criteria.highPriorityThreshold} for red companies)`,
+    criteria.autoApply ? `Auto-apply at ${criteria.autoApplyMinScore}+, up to ${criteria.autoApplyDailyCap} a day` : "Auto-apply off: every application waits for you",
   ];
 
   return (
@@ -42,7 +44,7 @@ export default function QueuePage() {
         <div>
           <h1 style={{ fontSize: 34, fontWeight: 600, letterSpacing: "-0.01em" }}>Today&apos;s matches</h1>
           <p className="secondary" style={{ marginTop: 4 }}>
-            Each one has a tailored resume, cover letter and answers ready. Approve to send it on the next run, or skip to teach the filter.
+            Each one has a tailored resume, cover letter and answers ready. Approve to send it on the next run, or skip to teach the filter. Matches marked auto-apply go out on their own unless you skip them.
           </p>
         </div>
 
@@ -61,7 +63,7 @@ export default function QueuePage() {
 
         <div className="qcards">
           {[...pending, ...approved, ...skipped].map((a) => (
-            <QueueCard key={a.id} a={a} />
+            <QueueCard key={a.id} a={a} auto={autoIds.has(a.id)} />
           ))}
         </div>
       </div>
@@ -106,7 +108,7 @@ export default function QueuePage() {
   );
 }
 
-function QueueCard({ a }: { a: AppWithJob }) {
+function QueueCard({ a, auto }: { a: AppWithJob; auto: boolean }) {
   const j = a.job;
   const answers = a.answers ?? [];
   const where = [j.location, modeLabel(j.workMode)].filter((x, i, arr) => x && !(i === 1 && arr[0]?.toLowerCase().includes(x.toLowerCase()))).join(" · ");
@@ -126,6 +128,7 @@ function QueueCard({ a }: { a: AppWithJob }) {
             {where ? <span className="tag">{where}</span> : null}
             <span className="tag">Posted {j.postedAt ? fmtDate(j.postedAt) : "date n/a"}</span>
             {a.atsType ? <span className="tag">{a.atsType}</span> : null}
+            {auto ? <span className="tag amber">Auto-applies next run</span> : null}
           </div>
           <h2>{j.title}</h2>
           <div className="co">

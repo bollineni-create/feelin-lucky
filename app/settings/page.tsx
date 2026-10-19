@@ -164,6 +164,34 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 <label htmlFor="notes">Notes for scoring</label>
                 <textarea className="input" id="notes" name="notes" rows={4} defaultValue={c.notes ?? ""} />
               </div>
+              <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
+                <legend className="label-caps">Auto-apply</legend>
+                <label className="check">
+                  <input type="checkbox" name="auto_apply" defaultChecked={c.autoApply} /> Submit strong matches without waiting for my approval
+                </label>
+                <span className="small muted">
+                  The agent applies on its own (careers sites and LinkedIn Easy Apply) when the fit score clears the bar, materials are ready and no answer needs you. Everything else still waits in the Queue. Needs a confirmed profile.
+                </span>
+              </fieldset>
+              <div className="row2">
+                <div className="field">
+                  <label htmlFor="auto_apply_min_score">Auto-apply at fit score</label>
+                  <input className="input mono" id="auto_apply_min_score" name="auto_apply_min_score" inputMode="numeric" defaultValue={c.autoApplyMinScore} />
+                </div>
+                <div className="field">
+                  <label htmlFor="auto_apply_daily_cap">Max auto-applies a day</label>
+                  <input className="input mono" id="auto_apply_daily_cap" name="auto_apply_daily_cap" inputMode="numeric" defaultValue={c.autoApplyDailyCap} />
+                </div>
+              </div>
+              <div className="field">
+                <span className="small">Auto-apply to jobs found on</span>
+                <label className="check">
+                  <input type="checkbox" name="auto_apply_sources" value="careers" defaultChecked={c.autoApplySources.includes("careers")} /> Company careers sites
+                </label>
+                <label className="check">
+                  <input type="checkbox" name="auto_apply_sources" value="linkedin" defaultChecked={c.autoApplySources.includes("linkedin")} /> LinkedIn (Easy Apply, or the company site it links to)
+                </label>
+              </div>
               <button className="btn btn-primary" type="submit">
                 Save criteria
               </button>

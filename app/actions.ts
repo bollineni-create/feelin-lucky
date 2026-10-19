@@ -7,7 +7,7 @@ import { db, schema } from "@/lib/db";
 import { changeStage, getApplication, hasMaterials, iso, logEvent } from "@/lib/logic";
 import { renderMaterials } from "@/lib/render";
 import { startAgentRun } from "@/lib/runner";
-import { HIGHLIGHTS, PRIORITIES, STAGES, type Highlight, type Priority, type Stage, type WorkEntry, type EducationEntry, type BroadSearch } from "@/db/schema";
+import { HIGHLIGHTS, PRIORITIES, SOURCES, STAGES, type Highlight, type Priority, type Stage, type WorkEntry, type EducationEntry, type BroadSearch, type Source } from "@/db/schema";
 
 const refresh = () => {
   revalidatePath("/", "layout");
@@ -228,6 +228,10 @@ export async function saveCriteria(formData: FormData) {
       lookbackDays: num("lookback_days") ?? 7,
       broadSearches,
       notes: str(formData, "notes"),
+      autoApply: formData.get("auto_apply") === "on",
+      autoApplyMinScore: num("auto_apply_min_score") ?? 85,
+      autoApplyDailyCap: num("auto_apply_daily_cap") ?? 10,
+      autoApplySources: formData.getAll("auto_apply_sources").filter((v): v is Source => SOURCES.includes(v as Source)),
       updatedAt: iso(),
     })
     .where(eq(schema.searchCriteria.id, 1))

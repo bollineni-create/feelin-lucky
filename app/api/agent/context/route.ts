@@ -2,7 +2,7 @@ import path from "node:path";
 import { and, asc, eq, inArray, isNotNull, isNull, or, lt } from "drizzle-orm";
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
-import { OPEN_STAGES, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor } from "@/lib/logic";
+import { OPEN_STAGES, autoAppliedToday, autoApplyCandidates, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +32,7 @@ export const GET = agentRoute(async (req) => {
   // Never-scanned first (NULLs sort first), then oldest scan; high priority ahead of normal. Array.sort is stable.
   companiesDue.sort((a, b) => (a.priority === b.priority ? 0 : a.priority === "high" ? -1 : 1));
 
-  const approved = listApplications(eq(applications.stage, "approved")).map((a) => ({
+  const toSubmit = (a: AppWithJob) => ({
     application_id: a.id,
     job_id: a.jobId,
     company: a.job.companyName,
@@ -47,7 +47,9 @@ export const GET = agentRoute(async (req) => {
     cover_letter_docx: a.coverLetterPath?.replace(/\.pdf$/, ".docx") ?? null,
     answers: a.answers ?? [],
     needs_signin: a.needsSignin,
-  }));
+  });
+  const approved = listApplications(eq(applications.stage, "approved")).map(toSubmit);
+  const autoApply = profile.confirmed ? autoApplyCandidates().map(toSubmit) : [];
 
   const open = listApplications(inArray(applications.stage, ["found", ...OPEN_STAGES])).map((a) => ({
     application_id: a.id,
@@ -116,6 +118,15 @@ export const GET = agentRoute(async (req) => {
     })),
     companies_due_total: companiesDue.length,
     approved_to_submit: profile.confirmed ? approved : [],
+    auto_apply: {
+      enabled: criteria.autoApply && profile.confirmed,
+      min_score: criteria.autoApplyMinScore,
+      daily_cap: criteria.autoApplyDailyCap,
+      applied_today: autoAppliedToday(),
+      sources: criteria.autoApplySources,
+    },
+    // Strong matches the agent may submit without an approval (auto-apply on). Re-fetch after Phase C: newly prepared jobs land here.
+    auto_apply_to_submit: autoApply,
     submit_blocked_reason: profile.confirmed
       ? null
       : approved.length

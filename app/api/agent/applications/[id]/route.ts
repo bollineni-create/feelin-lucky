@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { ApiError, agentRoute, intParam, parseBody } from "@/lib/agent-auth";
-import { FOLLOW_UP_DAYS, changeStage, daysFromNow, getApplication, iso, logEvent } from "@/lib/logic";
+import { FOLLOW_UP_DAYS, autoApplyCandidates, autoApplyBlocker, changeStage, daysFromNow, getApplication, iso, logEvent } from "@/lib/logic";
 import { STAGES, type Application, type Stage } from "@/db/schema";
 
 const Body = z.object({
@@ -19,6 +19,7 @@ const Body = z.object({
 });
 
 // The agent can move an application forward, but approval belongs to the user alone.
+// found → applied is allowed only for auto-apply candidates, checked below.
 const AGENT_TRANSITIONS: Record<Stage, Stage[]> = {
   found: ["closed"],
   approved: ["applied", "closed"],
@@ -44,7 +45,15 @@ export const PATCH = agentRoute(async (req, params) => {
   if (b.needs_signin !== undefined) extra.needsSignin = b.needs_signin;
 
   if (b.stage && b.stage !== app.stage) {
-    if (!AGENT_TRANSITIONS[app.stage].includes(b.stage)) {
+    let detail = b.detail ?? b.closed_reason ?? null;
+    const autoApply = app.stage === "found" && b.stage === "applied";
+    if (autoApply) {
+      const blocker = autoApplyBlocker(app);
+      if (blocker) throw new ApiError(403, `not eligible for auto-apply: ${blocker}`);
+      if (!autoApplyCandidates().some((a) => a.id === id)) throw new ApiError(403, "not eligible for auto-apply: today's auto-apply cap is reached");
+      extra.autoApplied = true;
+      detail = `Auto-applied (fit ${app.job.fitScore})${b.detail ? `: ${b.detail}` : ""}`;
+    } else if (!AGENT_TRANSITIONS[app.stage].includes(b.stage)) {
       throw new ApiError(403, `agent may not move an application from "${app.stage}" to "${b.stage}"`);
     }
     if (b.stage === "applied") {
@@ -62,7 +71,7 @@ export const PATCH = agentRoute(async (req, params) => {
     if (b.stage === "screening" || b.stage === "interviewing" || b.stage === "offer") {
       if (b.next_action === undefined) extra.nextAction = null;
     }
-    const updated = changeStage(id, b.stage, { source: "agent", detail: b.detail ?? b.closed_reason ?? null, extra });
+    const updated = changeStage(id, b.stage, { source: "agent", detail, extra });
     return { application: updated };
   }
 

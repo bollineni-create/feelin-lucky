@@ -1,6 +1,6 @@
 # Job Hunt Command Center
 
-A local app that tracks the job search, plus a daily Claude Code agent that finds jobs, prepares applications and submits only the ones you approve. Built from `JOB_HUNT_SPEC.md`.
+A local app that tracks the job search, plus a daily Claude Code agent that finds jobs, prepares applications and submits the ones you approve, or, with auto-apply on, the strong matches on its own. Built from `JOB_HUNT_SPEC.md`.
 
 - **App:** Next.js + SQLite (`data/jobhunt.db`), on `127.0.0.1:3000`. Screens: Pipeline `/`, Today's queue `/queue`, Company watchlist `/companies`, Application detail `/jobs/[id]`, Settings `/settings`.
 - **Agent:** `scripts/daily-run.sh` starts a headless Claude Code session with Claude in Chrome, which follows `agent/RUNBOOK.md` and talks to the token-gated `/api/agent/*` routes. The app itself never browses.
@@ -42,10 +42,23 @@ scripts/install-launchd.sh --remove
 
 **Run now** (Pipeline) and **Submit approved now** (Queue) start the same script from the app.
 
+## Auto-apply
+
+Off by default. Turn it on under **Settings → Search criteria → Auto-apply** to let the agent submit applications by itself, on company careers sites and on LinkedIn (Easy Apply, or the company site LinkedIn links to). A job is auto-applied only when the server agrees that:
+
+- the profile is confirmed and the job's source is ticked;
+- the fit score is at least the auto-apply score (default 85) and the company's normal threshold;
+- the resume and cover letter are rendered, the portal isn't flagged for sign-in, and nothing says `[NEEDS YOU: …]`;
+- fewer than the daily cap (default 10) have gone out today.
+
+Those jobs show **Auto-applies next run** in the Queue, so you can still skip one before the run. Jobs prepared during a run are auto-applied in the same run. Every auto-application gets an "Auto-applied" event and a confirmation screenshot, like an approved one. The agent still never creates accounts, types passwords or solves CAPTCHAs.
+
+LinkedIn's user agreement restricts automated use of the site, and frequent automated Easy Apply can get an account restricted. The runbook keeps it slow (30 s or more between submissions, stop on any security check), but keep the daily cap low, or untick LinkedIn and auto-apply only on careers sites.
+
 ## Safety rails, enforced in code as well as in the runbook
 
 - `/api/agent/*` requires `Authorization: Bearer $AGENT_TOKEN`. The app binds to loopback only.
-- The agent can't approve: the API rejects `found → approved`, and `→ applied` from anything but `approved`. Approval only comes from the Queue's **Approve and submit** button.
+- The agent can't approve: the API rejects `found → approved`, and `→ applied` from anything but `approved`, except `found → applied` for a job that passes the auto-apply checks above (re-checked on the server at that moment, cap included). Approval only comes from the Queue's **Approve and submit** button.
 - `approved_to_submit` is empty while the profile is unconfirmed.
 - Jobs under the fit threshold (70; 60 for high-priority companies) are closed as `low_fit` on arrival and never re-scored. A job keeps its first score.
 - In headless mode the agent may only use the Chrome tools, `agent/api.sh`, `screencapture`, reads, and writes to `logs/tmp/`. `curl`, `rm`, `git` and WebFetch are blocked.
@@ -54,7 +67,7 @@ scripts/install-launchd.sh --remove
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/agent/context` | Criteria, profile, companies due a scan, open applications, approved applications to submit, jobs needing a score or materials, skip feedback |
+| GET | `/api/agent/context` | Criteria, profile, companies due a scan, open applications, approved and auto-apply applications to submit, jobs needing a score or materials, skip feedback |
 | POST / PATCH | `/api/agent/runs`, `/api/agent/runs/:id` | Start a run; finish it with counts and errors |
 | POST | `/api/agent/jobs` | Upsert found jobs (dedupe on company + title + location) with fit score and reasons |
 | POST | `/api/agent/jobs/:id/materials` | Resume/CV, cover letter and answers as Markdown; rendered to PDF and DOCX in `data/applications/<job-id>/` |
