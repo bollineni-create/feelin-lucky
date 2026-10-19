@@ -47,7 +47,7 @@ bash scripts/make-mac-app.sh
 
 step "Opening Job Hunt"
 open "$HOME/Applications/Job Hunt.app"
-echo "Done. Next time, open \"Job Hunt\" from Spotlight, Launchpad or the Dock."
+echo "Done. Next time, click Job Hunt in the Dock (or find it with Spotlight)."
 if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ] && [ ! -x "$HOME/.claude/local/claude" ]; then
   echo
   echo "One thing left for the agent to search and apply: install Claude Code and sign in."

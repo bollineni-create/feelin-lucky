@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Builds "Job Hunt.app" in ~/Applications. Double-clicking it starts the app server if it isn't
-# already running (through the com.jobhunt.app launch agent when installed) and opens it in the browser.
+# Builds "Job Hunt.app" in ~/Applications and keeps it in the Dock. Opening it starts the app server if it
+# isn't already running (through the com.jobhunt.app launch agent when installed) and shows the app.
+# With Apple's command line tools (xcode-select --install) it's a native window with its own menus, like
+# Palimpsest (scripts/mac/JobHunt.swift); without them it opens the app in the default browser instead.
 #   scripts/make-mac-app.sh            create / recreate the app
 #   scripts/make-mac-app.sh --remove   delete it
 set -euo pipefail
@@ -8,10 +10,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$HOME/Applications/Job Hunt.app"
 
-if [ "${1:-}" = "--remove" ]; then rm -rf "$APP"; echo "Removed $APP"; exit 0; fi
+if [ "${1:-}" = "--remove" ]; then rm -rf "$APP"; echo "Removed $APP (remove it from the Dock by dragging it out)"; exit 0; fi
 [ "$(uname)" = "Darwin" ] || { echo "This builds a macOS app; run it on your Mac."; exit 1; }
 NODE_DIR="$(dirname "$(command -v node)")" || { echo "node not found"; exit 1; }
 
+osascript -e 'tell application id "com.jobhunt.launcher" to quit' >/dev/null 2>&1 || true
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
@@ -27,11 +30,26 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>JobHunt</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>JobHuntFolder</key><string>__ROOT__</string>
+  <key>JobHuntNodeDir</key><string>__NODE_DIR__</string>
 </dict>
 </plist>
 PLIST
+sed -i '' -e "s#__ROOT__#$ROOT#" -e "s#__NODE_DIR__#$NODE_DIR#" "$APP/Contents/Info.plist"
 
+# Native window: needs swiftc from the command line tools. Checking xcode-select first avoids the
+# "install developer tools?" pop-up that /usr/bin/swiftc shows when they're missing.
+NATIVE=0
+if xcode-select -p >/dev/null 2>&1 && xcrun --find swiftc >/dev/null 2>&1; then
+  echo "Compiling the Job Hunt window app"
+  if xcrun swiftc -O -o "$APP/Contents/MacOS/JobHunt" "$ROOT/scripts/mac/JobHunt.swift"; then NATIVE=1; fi
+fi
+
+if [ "$NATIVE" = 0 ]; then
+# No compiler: a small launcher that opens the app in the browser. It has no window of its own, so keep it out of the Dock.
+/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$APP/Contents/Info.plist"
 # Paths are fixed at build time: apps opened from Finder get a bare PATH.
 cat > "$APP/Contents/MacOS/JobHunt" <<LAUNCHER
 #!/bin/bash
@@ -57,6 +75,7 @@ fi
 if up; then open "$URL"; else alert "The app didn't start within a minute. Details are in $ROOT/logs/app.log"; exit 1; fi
 LAUNCHER
 chmod +x "$APP/Contents/MacOS/JobHunt"
+fi
 
 # Icon: a teal tile with "JH", drawn with the system's own tools (no downloads).
 ICON_SRC="$ROOT/scripts/app-icon.svg"
@@ -72,7 +91,23 @@ if [ -f "$ICON_SRC" ]; then
   fi
   rm -rf "$TMP"
 fi
+codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
 touch "$APP"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" >/dev/null 2>&1 || true
+
+# Keep it in the Dock (once; reinstalls leave the Dock alone).
+if [ "$NATIVE" = 1 ] && ! defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q "Job%20Hunt.app"; then
+  defaults write com.apple.dock persistent-apps -array-add \
+    "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file://${APP// /%20}/</string><key>_CFURLStringType</key><integer>15</integer></dict></dict></dict>"
+  killall Dock 2>/dev/null || true
+  echo "Added Job Hunt to the Dock"
+fi
 
 echo "Created $APP"
-echo "Open it from Launchpad or Spotlight (\"Job Hunt\"), or drag it to the Dock."
+if [ "$NATIVE" = 1 ]; then
+  echo "Click Job Hunt in the Dock to open it in its own window."
+else
+  echo "Open it from Launchpad or Spotlight (\"Job Hunt\"). For its own window and a Dock icon, run"
+  echo "  xcode-select --install"
+  echo "then run the installer again."
+fi
