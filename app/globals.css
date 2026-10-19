@@ -218,6 +218,9 @@ h2.section { font-size: 18px; font-weight: 600; }
 .status-ok { color: var(--accent-text); }
 .status-failed { color: var(--danger); }
 .status-running { color: var(--amber); }
+.run-log { margin-top: 4px; }
+.run-log > summary { cursor: pointer; }
+.run-log-text { margin: 6px 0 0; padding: 8px; font-family: var(--mono); font-size: 11px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; background: var(--divider); border-radius: 6px; max-height: 180px; overflow: auto; }
 
 /* ---------- Queue ---------- */
 .qcards { display: flex; flex-direction: column; gap: 16px; }

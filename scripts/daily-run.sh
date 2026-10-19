@@ -128,9 +128,51 @@ claude -p "$PROMPT" "$CHROME_FLAG" \
   >"$TRANSCRIPT" 2>>"$LOG" &
 CLAUDE_PID=$!
 
-# Watchdog: macOS has no `timeout` by default.
-( sleep $((MAX_MINUTES * 60)); kill -TERM "$CLAUDE_PID" 2>/dev/null ) &
+# Watchdog: macOS has no `timeout` by default. Killing it also ends its sleep, so none is left behind.
+( trap 'kill "$NAP" 2>/dev/null; exit 0' TERM; sleep $((MAX_MINUTES * 60)) & NAP=$!; wait "$NAP"; kill -TERM "$CLAUDE_PID" 2>/dev/null ) &
 WATCHDOG=$!
+
+# Startup check. Claude Code's first transcript event is its init event, which lists the MCP servers it loaded
+# and their status. Without Claude in Chrome the agent can't browse, so stop now with an error that says why,
+# instead of sitting at "running" while the agent gives up on its own, or never gets going at all.
+STARTUP_SECS="${JOBHUNT_STARTUP_SECS:-90}"
+chrome_status() {
+  python3 - "$TRANSCRIPT" 2>/dev/null <<'PY'
+import json, sys
+for line in open(sys.argv[1]):
+    try: e = json.loads(line)
+    except ValueError: continue
+    if e.get("type") == "system" and e.get("subtype") == "init":
+        s = {m.get("name"): m.get("status") for m in e.get("mcp_servers") or []}
+        print(s.get("claude-in-chrome") or "missing"); break
+PY
+}
+WAITED=0; CHROME=""
+while [ "$WAITED" -lt "$STARTUP_SECS" ]; do
+  kill -0 "$CLAUDE_PID" 2>/dev/null || break
+  CHROME="$(chrome_status)"
+  [ -n "$CHROME" ] && break
+  sleep 3; WAITED=$((WAITED + 3))
+done
+if kill -0 "$CLAUDE_PID" 2>/dev/null; then
+  STARTUP_ERR=""
+  if [ -z "$CHROME" ]; then
+    STARTUP_ERR="Claude Code wrote nothing in ${STARTUP_SECS}s. It may be stuck on a one-time prompt: in Terminal run 'claude --chrome', press Enter through the Chrome introduction, check that /chrome shows Enabled and Installed, then run the scan again."
+  elif [ "$CHROME" = "missing" ]; then
+    STARTUP_ERR="Claude in Chrome isn't loaded in this session. Claude Code is signed in with an API key or a setup-token token, or Chrome integration is off: in Terminal run 'claude', sign in with /login, and check /chrome."
+  elif [ "$CHROME" = "failed" ] || [ "$CHROME" = "needs-auth" ]; then
+    STARTUP_ERR="Claude in Chrome didn't connect (status: $CHROME). Check the extension is installed, enabled and signed in to the same account as Claude Code, with Chrome open; then run 'claude --chrome' and use /chrome → Reconnect extension."
+  fi
+  if [ -n "$STARTUP_ERR" ]; then
+    kill -TERM "$CLAUDE_PID" 2>/dev/null
+    kill "$WATCHDOG" 2>/dev/null
+    wait "$CLAUDE_PID" 2>/dev/null
+    fail_run "$STARTUP_ERR"
+    exit 1
+  fi
+  log "Claude in Chrome at start: $CHROME"
+fi
+
 wait "$CLAUDE_PID"
 CODE=$?
 kill "$WATCHDOG" 2>/dev/null || true

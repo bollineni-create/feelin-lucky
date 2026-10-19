@@ -2,8 +2,10 @@ import Link from "next/link";
 import { count, desc, eq, ne } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { activeRun, getCriteria, latestRuns, runActivity, listApplications, queueItems, sweepFollowUps, type AppWithJob } from "@/lib/logic";
-import { fmtDate, fmtDateTime, modeLabel, shortCity, sourceLabel } from "@/lib/format";
+import { ago, fmtDate, fmtDateTime, modeLabel, shortCity, sourceLabel } from "@/lib/format";
+import { LOG_TAIL_LINES, progressLine, runProgress } from "@/lib/run-progress";
 import { RunButton } from "@/components/RunButton";
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { runNow, stopRun } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -97,6 +99,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
 
   return (
     <div className="stack">
+      {running ? <AutoRefresh seconds={15} /> : null}
       <div className="page-head">
         <div>
           <h1>Pipeline</h1>
@@ -109,7 +112,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
           {running ? (
             <RunButton action={stopRun} label={`Stop run #${running.id}`} pendingLabel="Stopping…" doneMessage="Stopped." />
           ) : (
-            <RunButton action={runNow} label="Run scan now" pendingLabel="Starting…" />
+            <RunButton action={runNow} label="Run scan now" pendingLabel="Starting…" doneMessage="Started. Watch Chrome; the run log below updates as it goes." />
           )}
         </div>
       </div>
@@ -235,23 +238,42 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                   </tr>
                 </thead>
                 <tbody>
-                  {runs.map((r) => (
-                    <tr key={r.id}>
-                      <td className="mono">{fmtDateTime(r.startedAt)}</td>
-                      <td>
-                        <span className={`status-${r.status}`}>{r.status}</span> <span className="muted">· {r.phase}</span>
-                        {r.counts ? (
-                          <div className="muted">
-                            {Object.entries(r.counts)
-                              .map(([k, v]) => `${v} ${k}`)
-                              .join(" · ")}
-                          </div>
-                        ) : null}
-                        <div className="muted">{activityText(runActivity(r))}</div>
-                        {r.errors?.length ? <div className="status-failed">{r.errors.slice(0, 2).join("; ")}</div> : null}
-                      </td>
-                    </tr>
-                  ))}
+                  {runs.map((r, i) => {
+                    const isRunning = r.status === "running";
+                    // The live run, and the most recent finished one, show what their log and transcript say.
+                    const progress = isRunning || i === 0 ? runProgress(r) : null;
+                    const line = progress ? progressLine(progress, isRunning) : "";
+                    return (
+                      <tr key={r.id}>
+                        <td className="mono">{fmtDateTime(r.startedAt)}</td>
+                        <td>
+                          <span className={`status-${r.status}`}>{r.status}</span> <span className="muted">· {r.phase}</span>
+                          {r.counts ? (
+                            <div className="muted">
+                              {Object.entries(r.counts)
+                                .map(([k, v]) => `${v} ${k}`)
+                                .join(" · ")}
+                            </div>
+                          ) : null}
+                          <div className="muted">{activityText(runActivity(r))}</div>
+                          {line ? (
+                            <div className={isRunning ? "status-running" : "muted"}>
+                              {isRunning ? "Now: " : "Agent: "}
+                              {line}
+                              {progress?.lastEventAt && isRunning ? ` (${ago(progress.lastEventAt)})` : ""}
+                            </div>
+                          ) : null}
+                          {r.errors?.length ? <div className="status-failed">{r.errors.slice(0, 2).join("; ")}</div> : null}
+                          {progress?.logLines.length ? (
+                            <details className="run-log">
+                              <summary className="small muted">Last {Math.min(progress.logLines.length, LOG_TAIL_LINES)} lines of the log</summary>
+                              <pre className="run-log-text">{progress.logLines.join("\n")}</pre>
+                            </details>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}

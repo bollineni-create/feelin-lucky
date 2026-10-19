@@ -51,7 +51,7 @@ export async function undoApplication(appId: number) {
 }
 
 export async function runNow() {
-  const r = startAgentRun("all", "manual");
+  const r = await startAgentRun("all", "manual");
   refresh();
   return r;
 }
@@ -65,7 +65,7 @@ export async function stopRun() {
 }
 
 export async function submitApprovedNow() {
-  const r = startAgentRun("submit", "submit-now");
+  const r = await startAgentRun("submit", "submit-now");
   refresh();
   return r;
 }
