@@ -11,3 +11,4 @@ logs/
 .node/
 my-profile.json
 /*.pdf
+.installed-sha
