@@ -1,0 +1,70 @@
+# Job Hunt Command Center
+
+A local app that tracks the job search, plus a daily Claude Code agent that finds jobs, prepares applications and submits only the ones you approve. Built from `JOB_HUNT_SPEC.md`.
+
+- **App:** Next.js + SQLite (`data/jobhunt.db`), on `127.0.0.1:3000`. Screens: Pipeline `/`, Today's queue `/queue`, Company watchlist `/companies`, Application detail `/jobs/[id]`, Settings `/settings`.
+- **Agent:** `scripts/daily-run.sh` starts a headless Claude Code session with Claude in Chrome, which follows `agent/RUNBOOK.md` and talks to the token-gated `/api/agent/*` routes. The app itself never browses.
+
+## Setup (Mac)
+
+```bash
+npm install
+npm run setup          # writes AGENT_TOKEN to .env, creates the DB, seeds 134 companies + the LinkedIn tracker
+cp ~/path/to/Bollineni_Naren_Resume_2026_V2.pdf ~/path/to/Bollineni_Naren_CV_2026_V2.pdf data/source-docs/
+npm run build && npm start
+```
+
+Then open http://127.0.0.1:3000/settings and:
+
+1. Replace every `[CONFIRM]` / `[TITLE TO USE]` placeholder in the work history (titles, exact dates, the June 2022 entry) and fill in contact details, education and work authorization.
+2. Paste the resume and CV text as Markdown. The agent tailors from this text.
+3. Set **Minimum base**.
+4. Tick **I've checked every title and date** and save. Until the profile is confirmed, the agent won't fill or submit any form. The server also refuses to confirm while placeholders remain.
+
+## Running the agent
+
+```bash
+scripts/daily-run.sh --phase find,prepare   # first run: find + score + prepare, no submitting (build order step 6)
+scripts/daily-run.sh --phase submit         # submit what you approved
+scripts/daily-run.sh                        # all phases: submit → find → prepare → track
+```
+
+Requirements: Claude Code signed in, with Chrome open and the Claude in Chrome extension connected. The script checks `claude --help` for `--chrome`. If your version names it differently, set `CLAUDE_CHROME_FLAG` in `.env`. If the Chrome tools aren't named `mcp__claude-in-chrome__*` (check `/mcp` inside `claude --chrome`), set `CHROME_MCP_PREFIX`. For confirmation screenshots, give your terminal (and `/bin/bash` for launchd) Screen Recording permission. Without it, the agent saves the confirmation text instead.
+
+Each run gets a row in the Pipeline's run log and a full transcript in `logs/run-*.log`. Runs are capped at 120 minutes (`JOBHUNT_MAX_MINUTES`), and only one runs at a time.
+
+### Schedule
+
+```bash
+scripts/install-launchd.sh           # app always on + daily run weekdays 7:00 AM (Mac local time)
+scripts/install-launchd.sh --remove
+```
+
+**Run now** (Pipeline) and **Submit approved now** (Queue) start the same script from the app.
+
+## Safety rails, enforced in code as well as in the runbook
+
+- `/api/agent/*` requires `Authorization: Bearer $AGENT_TOKEN`. The app binds to loopback only.
+- The agent can't approve: the API rejects `found → approved`, and `→ applied` from anything but `approved`. Approval only comes from the Queue's **Approve and submit** button.
+- `approved_to_submit` is empty while the profile is unconfirmed.
+- Jobs under the fit threshold (70; 60 for high-priority companies) are closed as `low_fit` on arrival and never re-scored. A job keeps its first score.
+- In headless mode the agent may only use the Chrome tools, `agent/api.sh`, `screencapture`, reads, and writes to `logs/tmp/`. `curl`, `rm`, `git` and WebFetch are blocked.
+
+## Agent API
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/agent/context` | Criteria, profile, companies due a scan, open applications, approved applications to submit, jobs needing a score or materials, skip feedback |
+| POST / PATCH | `/api/agent/runs`, `/api/agent/runs/:id` | Start a run; finish it with counts and errors |
+| POST | `/api/agent/jobs` | Upsert found jobs (dedupe on company + title + location) with fit score and reasons |
+| POST | `/api/agent/jobs/:id/materials` | Resume/CV, cover letter and answers as Markdown; rendered to PDF and DOCX in `data/applications/<job-id>/` |
+| PATCH | `/api/agent/applications/:id` | Stage, `submitted_at`, `next_action`, `needs_signin`, … |
+| POST | `/api/agent/events` | Feed updates |
+| POST | `/api/agent/screenshots` | Confirmation screenshot (multipart or base64) and/or text |
+| PATCH | `/api/agent/companies/:id` | `careers_url`, `ats_type`, `scanned` |
+
+## Notes on the build
+
+- **Data model additions beyond spec §3:** `Job.company_name`, so LinkedIn jobs at companies outside the watchlist still have a name. `Company.categories` is a list (Valve and Salesforce sit in two categories). `Application` gains Markdown materials, `skip_reason`, `notes`, `linkedin_status` and `confirmation_text`. `Profile.confirmed` gates submission.
+- Teal, blue and orange highlights are treated as normal priority until you give them a meaning.
+- Applied with no response for 14 days gets `next_action = "Follow up"` automatically.

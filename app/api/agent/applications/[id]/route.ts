@@ -1,0 +1,75 @@
+import { eq } from "drizzle-orm";
+import { z } from "zod";
+import { db, schema } from "@/lib/db";
+import { ApiError, agentRoute, intParam, parseBody } from "@/lib/agent-auth";
+import { FOLLOW_UP_DAYS, changeStage, daysFromNow, getApplication, iso, logEvent } from "@/lib/logic";
+import { STAGES, type Application, type Stage } from "@/db/schema";
+
+const Body = z.object({
+  stage: z.enum(STAGES).optional(),
+  submitted_at: z.string().optional(),
+  next_action: z.string().nullable().optional(),
+  next_action_due: z.string().nullable().optional(),
+  needs_signin: z.boolean().optional(),
+  portal_note: z.string().nullable().optional(),
+  closed_reason: z.string().optional(),
+  confirmation_text: z.string().optional(),
+  linkedin_status: z.string().optional(),
+  detail: z.string().optional(),
+});
+
+// The agent can move an application forward, but approval belongs to the user alone.
+const AGENT_TRANSITIONS: Record<Stage, Stage[]> = {
+  found: ["closed"],
+  approved: ["applied", "closed"],
+  applied: ["screening", "interviewing", "offer", "closed"],
+  screening: ["interviewing", "offer", "closed"],
+  interviewing: ["offer", "closed"],
+  offer: ["closed"],
+  closed: [],
+};
+
+export const PATCH = agentRoute(async (req, params) => {
+  const id = intParam(params.id);
+  const b = await parseBody(req, Body);
+  const app = getApplication(id);
+  if (!app) throw new ApiError(404, "application not found");
+
+  const extra: Partial<Application> = {};
+  if (b.next_action !== undefined) extra.nextAction = b.next_action;
+  if (b.next_action_due !== undefined) extra.nextActionDue = b.next_action_due;
+  if (b.portal_note !== undefined) extra.portalNote = b.portal_note;
+  if (b.confirmation_text !== undefined) extra.confirmationText = b.confirmation_text;
+  if (b.linkedin_status !== undefined) extra.linkedinStatus = b.linkedin_status;
+  if (b.needs_signin !== undefined) extra.needsSignin = b.needs_signin;
+
+  if (b.stage && b.stage !== app.stage) {
+    if (!AGENT_TRANSITIONS[app.stage].includes(b.stage)) {
+      throw new ApiError(403, `agent may not move an application from "${app.stage}" to "${b.stage}"`);
+    }
+    if (b.stage === "applied") {
+      extra.submittedAt = b.submitted_at ?? iso();
+      extra.needsSignin = false;
+      extra.nextAction ??= "Follow up";
+      extra.nextActionDue ??= iso(daysFromNow(FOLLOW_UP_DAYS));
+    }
+    if (b.stage === "closed") {
+      if (!b.closed_reason) throw new ApiError(400, "closed_reason is required when closing");
+      extra.closedReason = b.closed_reason;
+      extra.nextAction = null;
+      extra.nextActionDue = null;
+    }
+    if (b.stage === "screening" || b.stage === "interviewing" || b.stage === "offer") {
+      if (b.next_action === undefined) extra.nextAction = null;
+    }
+    const updated = changeStage(id, b.stage, { source: "agent", detail: b.detail ?? b.closed_reason ?? null, extra });
+    return { application: updated };
+  }
+
+  if (b.needs_signin === true && !app.needsSignin) {
+    logEvent({ applicationId: id, type: "portal_update", title: "Needs you: portal sign-in", detail: b.portal_note ?? b.detail ?? "Portal asked for an account, password or CAPTCHA." });
+  }
+  if (!Object.keys(extra).length) return { application: app, unchanged: true };
+  const updated = db.update(schema.applications).set(extra).where(eq(schema.applications.id, id)).returning().get();
+  return { application: updated };
+});
