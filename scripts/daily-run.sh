@@ -98,9 +98,11 @@ CODE=$?
 kill "$WATCHDOG" 2>/dev/null || true
 
 # The agent's closing summary, then how many tool calls it made and which ones were refused.
-python3 - "$TRANSCRIPT" >>"$LOG" 2>/dev/null <<'PY' || true
+# Claude Code's own error (not signed in, API error, …) goes to $REASON so the run log can show it.
+REASON="logs/tmp/reason-$RUN_ID.txt"
+python3 - "$TRANSCRIPT" "$REASON" >>"$LOG" 2>/dev/null <<'PY' || true
 import json, sys, collections
-tools, denied, result = collections.Counter(), [], None
+tools, denied, result, is_error = collections.Counter(), [], None, False
 for line in open(sys.argv[1]):
     try: e = json.loads(line)
     except ValueError: continue
@@ -109,7 +111,10 @@ for line in open(sys.argv[1]):
             if c.get("type") == "tool_use": tools[c["name"].split("__")[-1]] += 1
     elif e.get("type") == "result":
         result = e.get("result")
+        is_error = bool(e.get("is_error")) or e.get("subtype", "success") != "success"
+        if is_error and not result: result = e.get("subtype")
         denied = [d.get("tool_name") for d in e.get("permission_denials") or []]
+if is_error and result: open(sys.argv[2], "w").write(str(result).strip()[:300])
 print("--- agent summary ---")
 print(result or "(no final message)")
 print("--- tool calls:", ", ".join(f"{n}×{k}" for k, n in tools.most_common()) or "none")
@@ -123,7 +128,12 @@ FOUND="$(echo "$RUN_JSON" | json_field "['activity']['jobs_found']")"
 log "Recorded by the app: ${SCANNED:-?} companies scanned, ${FOUND:-?} new jobs"
 if [ "$STATUS" = "running" ]; then
   if [ "$CODE" -eq 143 ]; then fail_run "Stopped after ${MAX_MINUTES} minutes"
-  else fail_run "Agent exited (code $CODE) without closing the run; see $LOG"; fi
+  else
+    # Say why: Claude Code's error result, else the last thing it wrote to stderr.
+    WHY="$(cat "$REASON" 2>/dev/null)"
+    [ -z "$WHY" ] && WHY="$(grep -v '^\[' "$LOG" | grep -v '^---' | grep -v '^(no final message)' | tail -n 3 | tr '\n' ' ' | cut -c1-300)"
+    fail_run "Agent exited (code $CODE) without closing the run${WHY:+: $WHY}. See $LOG"
+  fi
 elif [[ ",$PHASE," == *",find,"* && "$STATUS" = "ok" && "${SCANNED:-0}" = "0" && "${FOUND:-0}" = "0" ]]; then
   # A find phase that marked no company scanned and posted no job didn't search, whatever the agent reported.
   fail_run "Find phase recorded no scanned companies and no jobs; the agent didn't search. See $TRANSCRIPT"
