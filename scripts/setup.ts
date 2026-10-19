@@ -19,4 +19,5 @@ if (!/^AGENT_TOKEN=\S+/m.test(env)) {
 for (const dir of ["data/applications", "data/source-docs", "logs"]) fs.mkdirSync(path.join(root, dir), { recursive: true });
 
 execFileSync("npx", ["tsx", "db/seed.ts"], { stdio: "inherit" });
+execFileSync("npx", ["tsx", "scripts/import-profile.ts"], { stdio: "inherit" });
 console.log("\nNext: put your resume and CV PDFs in data/source-docs/, then `npm run build && npm start`.");

@@ -9,3 +9,5 @@ data/*
 logs/
 .DS_Store
 .node/
+my-profile.json
+/*.pdf
