@@ -12,6 +12,9 @@ cd "$ROOT"
 # launchd starts with a bare PATH.
 export PATH="$ROOT/.node/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.claude/local:$HOME/.npm-global/bin:$PATH"
 [ -f .env ] && set -a && . ./.env && set +a
+# Claude Code turns Claude in Chrome off, even with --chrome, when it signs in with an API key or a
+# `claude setup-token` token. The run has to use the /login sign-in instead.
+unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
 
 PHASE="all"
 TRIGGER="schedule"
@@ -135,10 +138,12 @@ kill "$WATCHDOG" 2>/dev/null || true
 # The agent's closing summary, then how many tool calls it made and which ones were refused.
 python3 - "$TRANSCRIPT" >>"$LOG" 2>/dev/null <<'PY' || true
 import json, sys, collections
-tools, denied, result = collections.Counter(), [], None
+tools, denied, result, servers = collections.Counter(), [], None, None
 for line in open(sys.argv[1]):
     try: e = json.loads(line)
     except ValueError: continue
+    if e.get("type") == "system" and e.get("subtype") == "init" and servers is None:
+        servers = {m.get("name"): m.get("status") for m in e.get("mcp_servers") or []}
     if e.get("type") == "assistant":
         for c in e.get("message", {}).get("content", []):
             if c.get("type") == "tool_use": tools[c["name"].split("__")[-1]] += 1
@@ -149,6 +154,8 @@ print("--- agent summary ---")
 print(result or "(no final message)")
 print("--- tool calls:", ", ".join(f"{n}×{k}" for k, n in tools.most_common()) or "none")
 if denied: print("--- refused tool calls:", ", ".join(collections.Counter(denied)))
+if servers is not None and servers.get("claude-in-chrome") != "connected":
+    print("--- Claude in Chrome at start:", servers.get("claude-in-chrome") or "not added (sign in with /login, not an API key or setup-token)")
 PY
 
 RUN_JSON="$(agent/api.sh GET "/api/agent/runs/$RUN_ID" 2>/dev/null)"
