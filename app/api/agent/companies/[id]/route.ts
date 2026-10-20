@@ -9,6 +9,8 @@ const Body = z.object({
   ats_type: z.string().max(60).nullable().optional(),
   last_scanned_at: z.string().optional(),
   scanned: z.boolean().optional(),
+  // Why the careers site couldn't be scanned (shown on the watchlist). null clears it; so does a successful scan.
+  scan_note: z.string().trim().max(300).nullable().optional(),
 });
 
 export const PATCH = agentRoute(async (req, params) => {
@@ -21,6 +23,13 @@ export const PATCH = agentRoute(async (req, params) => {
   if (b.ats_type !== undefined) patch.atsType = b.ats_type;
   if (b.last_scanned_at) patch.lastScannedAt = b.last_scanned_at;
   else if (b.scanned) patch.lastScannedAt = iso();
+  if (b.scan_note !== undefined) {
+    patch.scanNote = b.scan_note || null;
+    patch.scanNoteAt = b.scan_note ? iso() : null;
+  } else if (patch.lastScannedAt && company.scanNote) {
+    patch.scanNote = null;
+    patch.scanNoteAt = null;
+  }
   if (!Object.keys(patch).length) return { company, unchanged: true };
   const updated = db.update(schema.companies).set(patch).where(eq(schema.companies.id, id)).returning().get();
   return { company: updated };

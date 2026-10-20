@@ -6,7 +6,7 @@ import { STAGE_LABEL, listApplications } from "@/lib/logic";
 import { CATEGORIES } from "@/db/seed-data";
 import { ago } from "@/lib/format";
 import { Hl } from "@/components/Hl";
-import { deleteCompany, updateCompany } from "../../actions";
+import { clearScanNote, deleteCompany, updateCompany } from "../../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +33,23 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
           </p>
         </div>
       </div>
+      {c.scanNote ? (
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <h2>The agent couldn&apos;t scan this careers site</h2>
+          <p className="small status-failed" style={{ margin: "6px 0 10px" }}>
+            {c.scanNote} <span className="muted">({ago(c.scanNoteAt)})</span>
+          </p>
+          <p className="small muted" style={{ marginBottom: 10 }}>
+            If the note says Claude in Chrome won&apos;t open the site, allow it in the extension (Claude in Chrome → settings → site permissions). If it still won&apos;t open, set a
+            careers page on a job board the extension can reach, or pause the company and check the site yourself. The note clears itself after the next successful scan.
+          </p>
+          <form action={clearScanNote.bind(null, id)}>
+            <button className="btn btn-ghost btn-sm" type="submit">
+              Clear the note
+            </button>
+          </form>
+        </div>
+      ) : null}
       <div className="grid-main">
         <section className="panel">
           <h2>Settings</h2>

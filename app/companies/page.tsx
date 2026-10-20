@@ -38,6 +38,12 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
           <h1>Company watchlist</h1>
           <p className="sub">
             <span className="num">{all.length}</span> companies in <span className="num">{categories.length}</span> categories · <span className="num">{all.filter((c) => c.highlight).length}</span> highlighted
+            {all.some((c) => c.scanNote) ? (
+              <>
+                {" "}
+                · <span className="num">{all.filter((c) => c.scanNote).length}</span> couldn&apos;t be scanned (marked !)
+              </>
+            ) : null}
           </p>
         </div>
         <div className="legend" aria-label="Highlight legend">
@@ -87,11 +93,16 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                   <Link
                     href={`/companies/${c.id}`}
                     className={`chip ${c.highlight ? "flagged" : ""} ${c.priority === "paused" ? "paused" : ""}`}
-                    title={`${c.priority} priority · scanned ${ago(c.lastScannedAt)}`}
+                    title={`${c.priority} priority · scanned ${ago(c.lastScannedAt)}${c.scanNote ? ` · couldn't scan: ${c.scanNote}` : ""}`}
                   >
                     <Hl color={c.highlight} />
                     <span>{c.name}</span>
                     {c.atsType ? <span className="ats">{c.atsType}</span> : null}
+                    {c.scanNote ? (
+                      <span className="ats status-failed" aria-label="Couldn't scan">
+                        !
+                      </span>
+                    ) : null}
                   </Link>
                 </li>
               ))}

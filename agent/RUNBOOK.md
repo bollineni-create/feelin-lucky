@@ -34,7 +34,7 @@ agent/api.sh UPLOAD 42 logs/tmp/confirm-42.png "Confirmation #A1B2"
 | `PATCH /api/agent/applications/:id` | `stage`, `submitted_at`, `next_action`, `next_action_due`, `needs_signin`, `portal_note`, `closed_reason`, `confirmation_text`, `linkedin_status`, `detail` |
 | `POST /api/agent/events` | `{"application_id", "type": "status_change"\|"email"\|"portal_update"\|"note", "title", "detail"}` |
 | `UPLOAD <application_id> <png> [text]` | Confirmation screenshot (and/or text) after a submit |
-| `PATCH /api/agent/companies/:id` | `{"careers_url", "ats_type", "scanned": true}` |
+| `PATCH /api/agent/companies/:id` | `{"careers_url", "ats_type", "scanned": true}`, or `{"scan_note": "<why the site couldn't be scanned>"}` for a company you had to leave unscanned (a successful scan clears it) |
 
 The server refuses stage changes you aren't allowed to make (for example `found → approved`, or `applied` on anything not approved). A 403 means stop and move on, not try another way.
 
@@ -43,6 +43,7 @@ The server refuses stage changes you aren't allowed to make (for example `found 
 1. `agent/api.sh GET /api/agent/context` and keep the result in mind for the whole run.
 2. Confirm Chrome is reachable: open a new tab group with a blank tab. If that fails, apply hard rule 6.
 3. Run only the phases the prompt lists, in this order: **submit → find → prepare → track**. Before each phase, `PATCH` the run with `{"phase": "<name>"}`.
+4. Note the prompt's `FINISH_BY` time. The script stops the run outright at `HARD_STOP`, and a run stopped that way is marked failed even if it found jobs. Whatever phase you're in, by `FINISH_BY` stop searching and go to "End of run"; the next run picks up what's left.
 
 ## Phase A — submit (approved, then auto-apply)
 
@@ -78,7 +79,8 @@ Work through `approved_to_submit` first, then `auto_apply_to_submit` (skip this 
 1. If `careers_url` is empty, find the official careers page (search `"<company> careers"` and pick the company's own domain or its ATS). Record it with `PATCH /api/agent/companies/:id {"careers_url": ..., "ats_type": ...}`. `ats_type` is one of `workday`, `greenhouse`, `lever`, `ashby`, `icims`, `smartrecruiters`, `taleo`, `successfactors`, `oracle`, `custom`.
 2. Prefer the ATS's own job list view (e.g. `boards.greenhouse.io/<co>`, `jobs.lever.co/<co>`, `jobs.ashbyhq.com/<co>`, the Workday search page) over marketing pages. Search or filter it for the functions in `criteria.functions`, in the criteria locations or remote.
 3. Collect matching postings: title, location, work mode, URL, external id if visible, pay if listed, posted date, and the description text (trim boilerplate; keep up to about 6,000 characters). Search the board for each function's usual titles, not just the function name: e.g. "corporate development", "strategy", "business operations", "strategic finance", "FP&A", "treasury", "payments", "commercial banking", "partnerships", "product manager" for fintech.
-4. **Post what you found for this company right away** with `POST /api/agent/jobs` (don't hold everything for one batch at the end: a run that times out loses what wasn't posted). Then `PATCH` the company with `{"scanned": true}`, even if nothing matched. Only mark it scanned once you actually looked at its open roles; if the site wouldn't load or you couldn't search it, leave it unscanned and add a run error naming the company.
+4. **Post what you found for this company right away** with `POST /api/agent/jobs` (don't hold everything for one batch at the end: a run that times out loses what wasn't posted). Then `PATCH` the company with `{"scanned": true}`, even if nothing matched. Only mark it scanned once you actually looked at its open roles.
+5. **A site you can't scan is a note on the company, not a run error.** If Claude in Chrome answers that the domain isn't allowed (the extension's own site permissions) or the page won't load after one more try, leave the company unscanned and `PATCH /api/agent/companies/:id {"scan_note": "<one line: what happened, e.g. 'citadelsecurities.com is not an allowed domain for the Chrome extension'>"}`, then move on. The watchlist shows the note so the user can allow the site or change the careers page. Don't put it in the run's `errors`, and don't let it make the run `failed`: a run that scanned the rest is `ok`. A company that arrives with a `scan_note` gets one quick try (open the careers URL once); if it's blocked the same way, update the note and move on without spending more time on it.
 
 Spend up to about 60 minutes on careers sites. Finish every **high-priority** company before you stop. Leave any normal ones you don't get to for the next run; `companies_due` will still list them.
 
@@ -124,6 +126,6 @@ For each item in `open_applications`:
 ## End of run
 
 1. Close every tab you opened.
-2. `GET /api/agent/runs/$RUN_ID` and use its `activity` for `scanned` and `new` (count searches on top of the companies). Then `PATCH /api/agent/runs/$RUN_ID` with `status: "ok"` (or `"failed"` if a hard stop happened) and counts:
+2. `GET /api/agent/runs/$RUN_ID` and use its `activity` for `scanned` and `new` (count searches on top of the companies). Then `PATCH /api/agent/runs/$RUN_ID` with `status: "ok"` (or `"failed"` only if a hard stop happened: hard rules 5 or 6, or the profile blocking a submit) and counts. Companies you couldn't scan, postings that needed sign-in and other per-item problems are recorded on the company or application, not reasons to fail the run:
    `{"scanned": <companies + searches>, "new": <jobs created>, "queued": <materials posted>, "submitted": <applied>, "auto_applied": <applied from auto_apply_to_submit>, "flagged": <needs_signin set>, "errors": <count>}`, plus `errors` as short strings.
 3. Finish with a one-paragraph summary as your final message; it goes to the run log file.
