@@ -266,8 +266,18 @@ export function runActivity(run: Pick<typeof runs.$inferSelect, "startedAt" | "f
     .from(applications)
     .where(and(eq(applications.stage, "closed"), eq(applications.closedReason, "low_fit"), sql`${applications.stageChangedAt} >= ${from}`, sql`${applications.stageChangedAt} <= ${to}`))
     .get()!.n;
+  // Companies the agent left unscanned during this run, with the reason on the company (a site Claude in
+  // Chrome won't open, a page that wouldn't load). The watchlist shows the note; the run just names them.
+  const unscanned = db
+    .select({ name: companies.name })
+    .from(companies)
+    .where(and(isNotNull(companies.scanNote), sql`${companies.scanNoteAt} >= ${from}`, sql`${companies.scanNoteAt} <= ${to}`))
+    .orderBy(companies.name)
+    .all()
+    .map((c) => c.name);
   return {
     companies_scanned: scanned,
+    companies_unscanned: unscanned,
     jobs_found: found.reduce((s, r) => s + r.n, 0),
     jobs_found_careers: bySource.careers ?? 0,
     jobs_found_linkedin: bySource.linkedin ?? 0,

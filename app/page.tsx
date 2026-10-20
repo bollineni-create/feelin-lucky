@@ -244,6 +244,12 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                     // The live run, and the most recent finished one, show what their log and transcript say.
                     const progress = isRunning || i === 0 ? runProgress(r) : null;
                     const line = progress ? progressLine(progress, isRunning) : "";
+                    const activity = runActivity(r);
+                    // A site the agent couldn't scan is recorded on the company. If the agent also put it in
+                    // the run's errors, the company line below already says it, so that error isn't repeated.
+                    const unscanned = activity.companies_unscanned;
+                    const names = unscanned.map((name) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"));
+                    const errors = (r.errors ?? []).filter((e) => !names.some((re) => re.test(e)));
                     return (
                       <tr key={r.id}>
                         <td className="mono">{fmtDateTime(r.startedAt)}</td>
@@ -256,7 +262,12 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                                 .join(" · ")}
                             </div>
                           ) : null}
-                          <div className="muted">{activityText(runActivity(r))}</div>
+                          <div className="muted">{activityText(activity)}</div>
+                          {unscanned.length ? (
+                            <div className="muted">
+                              Couldn&apos;t scan {unscanned.join(", ")} · <Link href="/companies">see the watchlist</Link>
+                            </div>
+                          ) : null}
                           {line ? (
                             <div className={isRunning ? "status-running" : "muted"}>
                               {isRunning ? "Now: " : "Agent: "}
@@ -264,9 +275,9 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                               {progress?.lastEventAt && isRunning ? ` (${ago(progress.lastEventAt)})` : ""}
                             </div>
                           ) : null}
-                          {r.errors?.length ? (
+                          {errors.length ? (
                             <ul className="run-errors">
-                              {r.errors.map((e, j) => (
+                              {errors.map((e, j) => (
                                 <li key={j} className="status-failed">
                                   {e}
                                 </li>
