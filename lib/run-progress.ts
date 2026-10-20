@@ -181,7 +181,11 @@ export function progressLine(p: RunProgress, running: boolean): string {
   else if (p.browserOk > 0) {
     // The extension answered, whatever the init event said; only a later drop is worth a word.
     if (p.browserRefused > 0) parts.push(`Claude in Chrome: ${refused}`);
-  } else if (p.browserRefused > 0) parts.push(`Claude in Chrome isn't answering (${refused})`);
+  } else if (p.browserRefused > 0) {
+    // Claude Code's server was up when the extension didn't answer: the extension in Chrome is what's down.
+    const side = p.chrome === "connected" ? "; Claude Code's side was up, so the extension in Chrome has gone idle or is signed in to another account: quit and reopen Chrome, then /chrome → Reconnect extension" : "";
+    parts.push(`Claude in Chrome isn't answering (${refused}${side})`);
+  }
   else if (p.chrome === "pending") parts.push("Claude in Chrome: still connecting (the first browser call waits for it)");
   else if (p.chrome && p.chrome !== "connected") parts.push(`Claude in Chrome: ${p.chrome}`);
   if (p.siteBlocked > 0) parts.push(siteBlockedLine(p));
