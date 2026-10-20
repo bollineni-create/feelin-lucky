@@ -204,7 +204,8 @@ export function progressLine(p: RunProgress, running: boolean): string {
   if (p.chrome === "missing") parts.push("Claude in Chrome wasn't loaded, so the agent has no browser tools (see the error)");
   else if (p.browserRefused > 0 && p.browserLast === "ok") {
     // It didn't answer at some point and has answered since: slow to attach, or a drop it came back from.
-    parts.push(running ? `Claude in Chrome is answering again (${refused} earlier)` : `Claude in Chrome answered, after ${refused} earlier`);
+    // Normal at the start of a run (the extension attaches on the first call); worth a look only if it recurs.
+    parts.push(running ? `Claude in Chrome is answering (${refused} earlier while it attached; fine unless it recurs)` : `Claude in Chrome answered (${refused} earlier while it attached)`);
   } else if (p.browserRefused > 0 && p.browserOk > 0) {
     // It answered, then stopped: the extension dropped mid-run (its service worker goes idle).
     const calls = `${p.browserOk} call${p.browserOk === 1 ? "" : "s"}`;
