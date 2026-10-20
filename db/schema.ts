@@ -97,7 +97,10 @@ export const runs = sqliteTable("runs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   startedAt: text("started_at").notNull().$defaultFn(now),
   finishedAt: text("finished_at"),
+  // The phases the run was started with (e.g. "submit,find,prepare,track"); never changed afterwards.
   phase: text("phase").notNull().default("all"),
+  // The phase the agent says it is in right now, for a run in progress.
+  currentPhase: text("current_phase"),
   trigger: text("trigger").notNull().default("schedule"),
   status: text("status", { enum: ["running", "ok", "failed"] }).notNull().default("running"),
   counts: text("counts", { mode: "json" }).$type<Record<string, number>>(),

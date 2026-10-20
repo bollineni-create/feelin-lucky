@@ -1,0 +1,1 @@
+ALTER TABLE `runs` ADD `current_phase` text;

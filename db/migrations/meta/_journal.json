@@ -22,6 +22,13 @@
       "when": 1792484333505,
       "tag": "0002_scan_note",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792494565185,
+      "tag": "0003_current_phase",
+      "breakpoints": true
     }
   ]
 }
