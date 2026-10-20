@@ -39,7 +39,19 @@ function nextText(a: AppWithJob) {
   return null;
 }
 
-function activityText(a: ReturnType<typeof runActivity>) {
+/** The find phase hasn't run yet: the run is still in a phase that comes before it (e.g. submit). */
+function scanNotStarted(r: { status: string; phase: string; currentPhase: string | null }) {
+  if (r.status !== "running" || !r.currentPhase) return false;
+  const phases = r.phase.split(",").map((p) => p.trim());
+  const find = phases.indexOf("find");
+  const now = phases.indexOf(r.currentPhase);
+  return find >= 0 && now >= 0 && now < find;
+}
+
+function activityText(a: ReturnType<typeof runActivity>, r: { status: string; phase: string; currentPhase: string | null }) {
+  if (!a.companies_scanned && !a.jobs_found && scanNotStarted(r)) {
+    return `Scanning starts after ${r.currentPhase}; nothing to count yet`;
+  }
   const jobs = a.jobs_found ? `${a.jobs_found} new jobs (${a.jobs_found_careers} careers, ${a.jobs_found_linkedin} LinkedIn)` : "no new jobs";
   const lowFit = a.jobs_closed_low_fit ? ` · ${a.jobs_closed_low_fit} closed as low fit` : "";
   return `Recorded: ${a.companies_scanned} companies scanned · ${jobs}${lowFit}`;
@@ -263,7 +275,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                                 .join(" · ")}
                             </div>
                           ) : null}
-                          <div className="muted">{activityText(activity)}</div>
+                          <div className="muted">{activityText(activity, r)}</div>
                           {unscanned.length ? (
                             <div className="muted">
                               Couldn&apos;t scan {unscanned.join(", ")} · <Link href="/companies">see the watchlist</Link>
