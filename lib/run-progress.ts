@@ -15,8 +15,15 @@ export type RunProgress = {
   lastText: string | null;
   /** When the transcript last grew. */
   lastEventAt: string | null;
-  /** Claude in Chrome's status in Claude Code's init event: "connected", "failed", "missing" (not loaded), or null (no init yet). */
+  /**
+   * Claude in Chrome's status in Claude Code's init event: "connected", "pending" (still connecting when the
+   * session started; it usually connects on the first browser call), "failed", "missing" (not loaded), or null
+   * (no init yet).
+   */
   chrome: string | null;
+  /** Browser tool calls that got a result, and ones answered "Browser extension is not connected". */
+  browserOk: number;
+  browserRefused: number;
 };
 
 const TAIL_BYTES = 512 * 1024;
@@ -47,7 +54,11 @@ function head(file: string, bytes: number): string {
   }
 }
 
-type Event = { type?: string; subtype?: string; mcp_servers?: { name?: string; status?: string }[]; message?: { content?: { type?: string; name?: string; text?: string }[] } };
+type Content = { type?: string; id?: string; name?: string; text?: string; tool_use_id?: string; is_error?: boolean; content?: unknown };
+type Event = { type?: string; subtype?: string; mcp_servers?: { name?: string; status?: string }[]; message?: { content?: Content[] } };
+
+const CHROME_TOOL = /^mcp__claude-in-chrome__/;
+const NOT_CONNECTED = "Browser extension is not connected";
 
 function* events(text: string): Generator<Event> {
   for (const line of text.split("\n")) {
@@ -73,7 +84,7 @@ function safeLogPath(p: string | null): string | null {
 export function runProgress(run: Pick<Run, "logPath">): RunProgress | null {
   const log = safeLogPath(run.logPath);
   if (!log) return null;
-  const out: RunProgress = { logLines: [], toolCalls: null, toolCallsPartial: false, lastTool: null, lastText: null, lastEventAt: null, chrome: null };
+  const out: RunProgress = { logLines: [], toolCalls: null, toolCallsPartial: false, lastTool: null, lastText: null, lastEventAt: null, chrome: null, browserOk: 0, browserRefused: 0 };
   try {
     out.logLines = tail(log, 64 * 1024)
       .split("\n")
@@ -103,14 +114,24 @@ export function runProgress(run: Pick<Run, "logPath">): RunProgress | null {
     const partial = size > FULL_READ_LIMIT;
     const text = partial ? tail(transcript, TAIL_BYTES) : fs.readFileSync(transcript, "utf8");
     let calls = 0;
+    // Browser tool calls by id, so their results say whether the extension is actually answering.
+    const browserCalls = new Set<string>();
     for (const e of events(text)) {
-      if (e.type !== "assistant") continue;
-      for (const c of e.message?.content ?? []) {
-        if (c.type === "tool_use" && c.name) {
-          calls++;
-          out.lastTool = c.name.replace(/^mcp__[^_]+(?:-[^_]+)*__/, "");
-        } else if (c.type === "text" && c.text?.trim()) {
-          out.lastText = c.text.trim().slice(0, 240);
+      if (e.type === "assistant") {
+        for (const c of e.message?.content ?? []) {
+          if (c.type === "tool_use" && c.name) {
+            calls++;
+            out.lastTool = c.name.replace(/^mcp__[^_]+(?:-[^_]+)*__/, "");
+            if (CHROME_TOOL.test(c.name) && c.id) browserCalls.add(c.id);
+          } else if (c.type === "text" && c.text?.trim()) {
+            out.lastText = c.text.trim().slice(0, 240);
+          }
+        }
+      } else if (e.type === "user") {
+        for (const c of e.message?.content ?? []) {
+          if (c.type !== "tool_result") continue;
+          if (JSON.stringify(c.content ?? "").includes(NOT_CONNECTED)) out.browserRefused++;
+          else if (c.tool_use_id && browserCalls.has(c.tool_use_id) && !c.is_error) out.browserOk++;
         }
       }
     }
@@ -128,7 +149,13 @@ export function progressLine(p: RunProgress, running: boolean): string {
     return running ? "Claude Code hasn't written anything yet. If this stays for more than a minute or two, see the log below." : "";
   }
   const parts: string[] = [];
+  const refused = `${p.browserRefused} browser call${p.browserRefused === 1 ? "" : "s"} answered "not connected"`;
   if (p.chrome === "missing") parts.push("Claude in Chrome wasn't loaded, so the agent has no browser tools (see the error)");
+  else if (p.browserOk > 0) {
+    // The extension answered, whatever the init event said; only a later drop is worth a word.
+    if (p.browserRefused > 0) parts.push(`Claude in Chrome: ${refused}`);
+  } else if (p.browserRefused > 0) parts.push(`Claude in Chrome isn't answering (${refused})`);
+  else if (p.chrome === "pending") parts.push("Claude in Chrome: still connecting (the first browser call waits for it)");
   else if (p.chrome && p.chrome !== "connected") parts.push(`Claude in Chrome: ${p.chrome}`);
   if (p.toolCalls != null) {
     parts.push(`${p.toolCalls}${p.toolCallsPartial ? "+" : ""} tool call${p.toolCalls === 1 ? "" : "s"}`);

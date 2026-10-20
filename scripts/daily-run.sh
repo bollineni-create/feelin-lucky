@@ -150,12 +150,14 @@ Today is $(date +%Y-%m-%d)."
 ALLOWED="Read,Glob,Grep,Edit(logs/tmp/**),Bash(agent/api.sh:*),Bash(screencapture:*),$CHROME_TOOLS"
 
 log "Starting Claude Code (max ${MAX_MINUTES}m)…"
+# Claude Code's stderr goes to the run log, except the MCP SDK's "[mcp-sdk] ..." warnings about its own
+# credential storage, which say nothing about the run and go to the debug log instead.
 claude -p "$PROMPT" "$CHROME_FLAG" \
   --output-format stream-json --verbose \
   --allowedTools "$ALLOWED" \
   --disallowedTools "WebFetch,Bash(curl:*),Bash(rm:*),Bash(git:*)" \
   --debug-file "$ROOT/$DEBUG_LOG" \
-  >"$TRANSCRIPT" 2>>"$LOG" &
+  >"$TRANSCRIPT" 2> >(awk -v run="$LOG" -v dbg="$DEBUG_LOG" '/^\[mcp-sdk\]/ { print >> dbg; fflush(dbg); next } { print >> run; fflush(run) }') &
 CLAUDE_PID=$!
 
 # Watchdog: macOS has no `timeout` by default. Killing it also ends its sleep, so none is left behind.
@@ -203,7 +205,10 @@ if kill -0 "$CLAUDE_PID" 2>/dev/null; then
     fail_run "$STARTUP_ERR"
     exit 1
   fi
-  log "Claude in Chrome at start: $CHROME"
+  # "pending" is a server still connecting when the session started; Claude in Chrome usually connects on the
+  # agent's first browser call. The app's run log reads the transcript and shows whether it did.
+  NOTE=""; [ "$CHROME" = "pending" ] && NOTE=" (still connecting; the first browser call waits for it)"
+  log "Claude in Chrome at start: $CHROME$NOTE"
 fi
 
 wait "$CLAUDE_PID"
@@ -214,6 +219,7 @@ kill "$WATCHDOG" 2>/dev/null || true
 python3 - "$TRANSCRIPT" >>"$LOG" 2>/dev/null <<'PY' || true
 import json, sys, collections
 tools, denied, result, servers, not_connected = collections.Counter(), [], None, None, 0
+browser_calls, browser_ok = set(), 0
 for line in open(sys.argv[1]):
     try: e = json.loads(line)
     except ValueError: continue
@@ -221,11 +227,14 @@ for line in open(sys.argv[1]):
         servers = {m.get("name"): m.get("status") for m in e.get("mcp_servers") or []}
     if e.get("type") == "assistant":
         for c in e.get("message", {}).get("content", []):
-            if c.get("type") == "tool_use": tools[c["name"].split("__")[-1]] += 1
+            if c.get("type") == "tool_use":
+                tools[c["name"].split("__")[-1]] += 1
+                if c["name"].startswith("mcp__claude-in-chrome__"): browser_calls.add(c.get("id"))
     elif e.get("type") == "user":
         for c in e.get("message", {}).get("content", []):
-            if c.get("type") == "tool_result" and "Browser extension is not connected" in json.dumps(c.get("content")):
-                not_connected += 1
+            if c.get("type") != "tool_result": continue
+            if "Browser extension is not connected" in json.dumps(c.get("content")): not_connected += 1
+            elif c.get("tool_use_id") in browser_calls and not c.get("is_error"): browser_ok += 1
     elif e.get("type") == "result":
         result = e.get("result")
         denied = [d.get("tool_name") for d in e.get("permission_denials") or []]
@@ -233,7 +242,8 @@ print("--- agent summary ---")
 print(result or "(no final message)")
 print("--- tool calls:", ", ".join(f"{n}×{k}" for k, n in tools.most_common()) or "none")
 if denied: print("--- refused tool calls:", ", ".join(collections.Counter(denied)))
-if servers is not None and servers.get("claude-in-chrome") != "connected":
+if browser_ok: print(f"--- Claude in Chrome answered {browser_ok} browser call(s)")
+elif servers is not None and servers.get("claude-in-chrome") != "connected":
     print("--- Claude in Chrome at start:", servers.get("claude-in-chrome") or "not added (sign in with /login, not an API key or setup-token)")
 if not_connected:
     print(f"--- {not_connected} browser tool call(s) answered 'Browser extension is not connected': open Chrome, check the Claude extension is installed, enabled and signed in to the same claude.ai account as Claude Code, then run 'claude --chrome' and use /chrome -> Reconnect extension.")
