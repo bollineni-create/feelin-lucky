@@ -99,7 +99,26 @@ export function watchTier(a: Pick<AppWithJob, "companyPriority">) {
 }
 
 /** Watchlist companies first, then fit score. */
-export const byWatchlistThenScore = (x: AppWithJob, y: AppWithJob) => watchTier(x) - watchTier(y) || (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0);
+/** The job board or portal an application goes through, from the company's ATS or the posting's host. */
+export function portalOf(a: Pick<AppWithJob, "atsType"> & { job: Pick<AppWithJob["job"], "url" | "source"> }): string {
+  const host = (a.job.url ?? "").toLowerCase();
+  if (a.job.source === "linkedin" || host.includes("linkedin.com")) return "linkedin";
+  const byHost: [RegExp, string][] = [
+    [/greenhouse\.io/, "greenhouse"], [/lever\.co/, "lever"], [/ashbyhq\.com/, "ashby"], [/smartrecruiters\.com/, "smartrecruiters"],
+    [/myworkday(?:jobs)?\.com/, "workday"], [/oraclecloud\.com|taleo\.net/, "oracle"], [/eightfold\.ai/, "eightfold"],
+    [/successfactors\.com/, "successfactors"], [/icims\.com/, "icims"], [/paylocity\.com/, "paylocity"],
+  ];
+  return byHost.find(([re]) => re.test(host))?.[1] ?? a.atsType ?? "custom";
+}
+
+/** Phase A order: quick boards first, then unknown portals, then the ones that want an account (the agent
+ * usually has to flag those), with items already flagged "needs sign-in" last so an untouched item never
+ * waits behind one the user hasn't signed in to yet. Ties keep the oldest approval first. */
+const PORTAL_RANK: Record<string, number> = { linkedin: 0, greenhouse: 0, lever: 0, ashby: 0, smartrecruiters: 0, custom: 1, workday: 2, oracle: 2, taleo: 2, eightfold: 2, successfactors: 2, icims: 2 };
+export const bySubmitOrder = (x: AppWithJob, y: AppWithJob) =>
+  Number(x.needsSignin) - Number(y.needsSignin) || (PORTAL_RANK[portalOf(x)] ?? 1) - (PORTAL_RANK[portalOf(y)] ?? 1) || x.stageChangedAt.localeCompare(y.stageChangedAt);
+
+export const byWatchlistThenScore =(x: AppWithJob, y: AppWithJob) => watchTier(x) - watchTier(y) || (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0);
 
 export function listApplications(where?: ReturnType<typeof and>): AppWithJob[] {
   const rows = db
