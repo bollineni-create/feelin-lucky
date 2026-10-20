@@ -41,7 +41,8 @@ function nextText(a: AppWithJob) {
 
 function activityText(a: ReturnType<typeof runActivity>) {
   const jobs = a.jobs_found ? `${a.jobs_found} new jobs (${a.jobs_found_careers} careers, ${a.jobs_found_linkedin} LinkedIn)` : "no new jobs";
-  return `Recorded: ${a.companies_scanned} companies scanned · ${jobs}`;
+  const lowFit = a.jobs_closed_low_fit ? ` · ${a.jobs_closed_low_fit} closed as low fit` : "";
+  return `Recorded: ${a.companies_scanned} companies scanned · ${jobs}${lowFit}`;
 }
 
 function whenLabel(iso: string) {
