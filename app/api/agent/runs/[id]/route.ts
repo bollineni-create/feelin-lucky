@@ -22,7 +22,8 @@ export const PATCH = agentRoute(async (req, params) => {
     .update(schema.runs)
     .set({
       status: b.status ?? run.status,
-      phase: b.phase ?? run.phase,
+      // The agent reports the phase it is entering; the phases the run was started with stay as they are.
+      currentPhase: b.phase ?? run.currentPhase,
       counts: b.counts ? { ...(run.counts ?? {}), ...b.counts } : run.counts,
       errors: b.errors ? [...(run.errors ?? []), ...b.errors] : run.errors,
       finishedAt: done ? iso() : run.finishedAt,

@@ -255,6 +255,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                         <td className="mono">{fmtDateTime(r.startedAt)}</td>
                         <td>
                           <span className={`status-${r.status}`}>{r.status}</span> <span className="muted">· {r.phase}</span>
+                          {isRunning && r.currentPhase ? <span className="muted"> · in {r.currentPhase}</span> : null}
                           {r.counts ? (
                             <div className="muted">
                               {Object.entries(r.counts)

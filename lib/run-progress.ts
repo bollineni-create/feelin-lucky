@@ -24,6 +24,9 @@ export type RunProgress = {
   /** Browser tool calls that got a result, and ones answered "Browser extension is not connected". */
   browserOk: number;
   browserRefused: number;
+  /** Browser tool calls Claude in Chrome refused on its site permissions, and the hosts it refused. */
+  siteBlocked: number;
+  siteBlockedHosts: string[];
 };
 
 const TAIL_BYTES = 512 * 1024;
@@ -54,11 +57,26 @@ function head(file: string, bytes: number): string {
   }
 }
 
-type Content = { type?: string; id?: string; name?: string; text?: string; tool_use_id?: string; is_error?: boolean; content?: unknown };
+type Content = { type?: string; id?: string; name?: string; text?: string; tool_use_id?: string; is_error?: boolean; content?: unknown; input?: { url?: unknown } };
 type Event = { type?: string; subtype?: string; mcp_servers?: { name?: string; status?: string }[]; message?: { content?: Content[] } };
 
 const CHROME_TOOL = /^mcp__claude-in-chrome__/;
 const NOT_CONNECTED = "Browser extension is not connected";
+/**
+ * How Claude in Chrome answers a call on a site its site permissions don't allow (a navigation or a page read).
+ * The wording has varied between versions; these are the phrases seen so far.
+ */
+export const SITE_BLOCKED = /not an allowed domain|not allowed (?:by|for|on)|site permissions?|permission (?:denied|required|not granted)|blocked (?:by|domain|site)|domain is (?:not|blocked)/i;
+
+/** The host of a URL a browser tool was called with, or null. */
+export function hostOf(url: unknown): string | null {
+  if (typeof url !== "string") return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, "") || null;
+  } catch {
+    return null;
+  }
+}
 
 function* events(text: string): Generator<Event> {
   for (const line of text.split("\n")) {
@@ -84,7 +102,7 @@ function safeLogPath(p: string | null): string | null {
 export function runProgress(run: Pick<Run, "logPath">): RunProgress | null {
   const log = safeLogPath(run.logPath);
   if (!log) return null;
-  const out: RunProgress = { logLines: [], toolCalls: null, toolCallsPartial: false, lastTool: null, lastText: null, lastEventAt: null, chrome: null, browserOk: 0, browserRefused: 0 };
+  const out: RunProgress = { logLines: [], toolCalls: null, toolCallsPartial: false, lastTool: null, lastText: null, lastEventAt: null, chrome: null, browserOk: 0, browserRefused: 0, siteBlocked: 0, siteBlockedHosts: [] };
   try {
     out.logLines = tail(log, 64 * 1024)
       .split("\n")
@@ -114,15 +132,17 @@ export function runProgress(run: Pick<Run, "logPath">): RunProgress | null {
     const partial = size > FULL_READ_LIMIT;
     const text = partial ? tail(transcript, TAIL_BYTES) : fs.readFileSync(transcript, "utf8");
     let calls = 0;
-    // Browser tool calls by id, so their results say whether the extension is actually answering.
-    const browserCalls = new Set<string>();
+    // Browser tool calls by id (with the host each was aimed at, when it had a URL), so their results say
+    // whether the extension is actually answering, and which sites it refuses.
+    const browserCalls = new Map<string, string | null>();
+    const blockedHosts = new Set<string>();
     for (const e of events(text)) {
       if (e.type === "assistant") {
         for (const c of e.message?.content ?? []) {
           if (c.type === "tool_use" && c.name) {
             calls++;
             out.lastTool = c.name.replace(/^mcp__[^_]+(?:-[^_]+)*__/, "");
-            if (CHROME_TOOL.test(c.name) && c.id) browserCalls.add(c.id);
+            if (CHROME_TOOL.test(c.name) && c.id) browserCalls.set(c.id, hostOf(c.input?.url));
           } else if (c.type === "text" && c.text?.trim()) {
             out.lastText = c.text.trim().slice(0, 240);
           }
@@ -130,13 +150,20 @@ export function runProgress(run: Pick<Run, "logPath">): RunProgress | null {
       } else if (e.type === "user") {
         for (const c of e.message?.content ?? []) {
           if (c.type !== "tool_result") continue;
-          if (JSON.stringify(c.content ?? "").includes(NOT_CONNECTED)) out.browserRefused++;
-          else if (c.tool_use_id && browserCalls.has(c.tool_use_id) && !c.is_error) out.browserOk++;
+          const result = JSON.stringify(c.content ?? "");
+          const browser = c.tool_use_id ? browserCalls.has(c.tool_use_id) : false;
+          if (result.includes(NOT_CONNECTED)) out.browserRefused++;
+          else if (browser && SITE_BLOCKED.test(result)) {
+            out.siteBlocked++;
+            const host = browserCalls.get(c.tool_use_id!);
+            if (host) blockedHosts.add(host);
+          } else if (browser && !c.is_error) out.browserOk++;
         }
       }
     }
     out.toolCalls = calls;
     out.toolCallsPartial = partial;
+    out.siteBlockedHosts = [...blockedHosts].sort();
   } catch {
     // Unreadable transcript; the log lines still say something.
   }
@@ -157,9 +184,22 @@ export function progressLine(p: RunProgress, running: boolean): string {
   } else if (p.browserRefused > 0) parts.push(`Claude in Chrome isn't answering (${refused})`);
   else if (p.chrome === "pending") parts.push("Claude in Chrome: still connecting (the first browser call waits for it)");
   else if (p.chrome && p.chrome !== "connected") parts.push(`Claude in Chrome: ${p.chrome}`);
+  if (p.siteBlocked > 0) parts.push(siteBlockedLine(p));
   if (p.toolCalls != null) {
     parts.push(`${p.toolCalls}${p.toolCallsPartial ? "+" : ""} tool call${p.toolCalls === 1 ? "" : "s"}`);
     if (p.lastTool) parts.push(`last: ${p.lastTool}`);
   }
   return parts.join(" · ");
+}
+
+/** One line on the sites Claude in Chrome refused, and the one setting that usually fixes all of them at once. */
+export function siteBlockedLine(p: RunProgress): string {
+  const hosts = p.siteBlockedHosts;
+  const shown = hosts.slice(0, 6).join(", ") + (hosts.length > 6 ? ` and ${hosts.length - 6} more` : "");
+  const calls = `${p.siteBlocked} browser call${p.siteBlocked === 1 ? "" : "s"}`;
+  const fix =
+    hosts.length >= 3
+      ? "the extension is only allowed on some sites; give Claude in Chrome access to all sites (chrome://extensions → Claude → Site access) and allow sites in its own settings without asking each time"
+      : "allow the site in the extension's site permissions, or point the company at a job board it can reach";
+  return `Claude in Chrome's site permissions refused ${calls}${shown ? ` on ${shown}` : ""}: ${fix}`;
 }

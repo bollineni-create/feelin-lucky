@@ -217,9 +217,16 @@ kill "$WATCHDOG" 2>/dev/null || true
 
 # The agent's closing summary, then how many tool calls it made and which ones were refused.
 python3 - "$TRANSCRIPT" >>"$LOG" 2>/dev/null <<'PY' || true
-import json, sys, collections
+import json, sys, collections, re
+from urllib.parse import urlsplit
 tools, denied, result, servers, not_connected = collections.Counter(), [], None, None, 0
-browser_calls, browser_ok = set(), 0
+browser_calls, browser_ok = {}, 0
+# How Claude in Chrome answers a call on a site its site permissions don't allow (kept in step with lib/run-progress.ts).
+SITE_BLOCKED = re.compile(r"not an allowed domain|not allowed (?:by|for|on)|site permissions?|permission (?:denied|required|not granted)|blocked (?:by|domain|site)|domain is (?:not|blocked)", re.I)
+site_blocked, blocked_hosts = 0, set()
+def host(url):
+    try: return urlsplit(url).hostname.removeprefix("www.") if isinstance(url, str) else None
+    except ValueError: return None
 for line in open(sys.argv[1]):
     try: e = json.loads(line)
     except ValueError: continue
@@ -229,12 +236,17 @@ for line in open(sys.argv[1]):
         for c in e.get("message", {}).get("content", []):
             if c.get("type") == "tool_use":
                 tools[c["name"].split("__")[-1]] += 1
-                if c["name"].startswith("mcp__claude-in-chrome__"): browser_calls.add(c.get("id"))
+                if c["name"].startswith("mcp__claude-in-chrome__"): browser_calls[c.get("id")] = host((c.get("input") or {}).get("url"))
     elif e.get("type") == "user":
         for c in e.get("message", {}).get("content", []):
             if c.get("type") != "tool_result": continue
-            if "Browser extension is not connected" in json.dumps(c.get("content")): not_connected += 1
-            elif c.get("tool_use_id") in browser_calls and not c.get("is_error"): browser_ok += 1
+            text = json.dumps(c.get("content"))
+            browser = c.get("tool_use_id") in browser_calls
+            if "Browser extension is not connected" in text: not_connected += 1
+            elif browser and SITE_BLOCKED.search(text):
+                site_blocked += 1
+                if browser_calls[c["tool_use_id"]]: blocked_hosts.add(browser_calls[c["tool_use_id"]])
+            elif browser and not c.get("is_error"): browser_ok += 1
     elif e.get("type") == "result":
         result = e.get("result")
         denied = [d.get("tool_name") for d in e.get("permission_denials") or []]
@@ -247,6 +259,12 @@ elif servers is not None and servers.get("claude-in-chrome") != "connected":
     print("--- Claude in Chrome at start:", servers.get("claude-in-chrome") or "not added (sign in with /login, not an API key or setup-token)")
 if not_connected:
     print(f"--- {not_connected} browser tool call(s) answered 'Browser extension is not connected': open Chrome, check the Claude extension is installed, enabled and signed in to the same claude.ai account as Claude Code, then run 'claude --chrome' and use /chrome -> Reconnect extension.")
+if site_blocked:
+    hosts = sorted(blocked_hosts)
+    where = (" on " + ", ".join(hosts[:6]) + (f" and {len(hosts) - 6} more" if len(hosts) > 6 else "")) if hosts else ""
+    fix = ("the extension is only allowed on some sites: give Claude in Chrome access to all sites (chrome://extensions -> Claude -> Site access) and allow sites in its own settings without asking each time"
+           if len(hosts) >= 3 else "allow the site in the extension's site permissions, or point the company at a job board it can reach")
+    print(f"--- Claude in Chrome's site permissions refused {site_blocked} browser call(s){where}: {fix}.")
 PY
 
 RUN_JSON="$(agent/api.sh GET "/api/agent/runs/$RUN_ID" 2>/dev/null)"
