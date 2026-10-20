@@ -2,7 +2,7 @@ import path from "node:path";
 import { and, asc, eq, inArray, isNotNull, isNull, or, lt } from "drizzle-orm";
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
-import { OPEN_STAGES, autoAppliedToday, byWatchlistThenScore, autoApplyCandidates, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
+import { OPEN_STAGES, autoAppliedToday, bySubmitOrder, byWatchlistThenScore, autoApplyCandidates, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +45,10 @@ export const GET = agentRoute(async (req) => {
     url: a.job.url,
     source: a.job.source,
     ats_type: a.atsType,
+    // The portal the application goes through, from the company's ATS or the posting's host. Quick boards
+    // (linkedin, greenhouse, lever, ashby, smartrecruiters) come first in the list; workday, oracle, taleo,
+    // eightfold, successfactors and icims usually want an account and come last.
+    portal: portalOf(a),
     resume_version: a.resumeVersion,
     resume_file: a.resumePath,
     resume_docx: a.resumePath?.replace(/\.pdf$/, ".docx") ?? null,
@@ -53,7 +57,7 @@ export const GET = agentRoute(async (req) => {
     answers: a.answers ?? [],
     needs_signin: a.needsSignin,
   });
-  const approved = listApplications(eq(applications.stage, "approved")).map(toSubmit);
+  const approved = listApplications(eq(applications.stage, "approved")).sort(bySubmitOrder).map(toSubmit);
   const autoApply = profile.confirmed ? autoApplyCandidates().map(toSubmit) : [];
 
   const open = listApplications(inArray(applications.stage, ["found", ...OPEN_STAGES])).map((a) => ({
