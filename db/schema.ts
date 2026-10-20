@@ -26,6 +26,10 @@ export const companies = sqliteTable(
     atsType: text("ats_type"),
     priority: text("priority", { enum: PRIORITIES }).notNull().default("normal"),
     lastScannedAt: text("last_scanned_at"),
+    // Why the agent couldn't scan the careers site last time (a site Claude in Chrome won't open, a page that
+    // wouldn't load). Cleared when a scan succeeds. Shown on the watchlist so the user can fix it.
+    scanNote: text("scan_note"),
+    scanNoteAt: text("scan_note_at"),
     createdAt: text("created_at").notNull().$defaultFn(now),
   },
   (t) => [uniqueIndex("companies_name_idx").on(t.name)],

@@ -166,6 +166,11 @@ export async function updateCompany(id: number, formData: FormData) {
   redirect("/companies");
 }
 
+export async function clearScanNote(id: number) {
+  db.update(schema.companies).set({ scanNote: null, scanNoteAt: null }).where(eq(schema.companies.id, id)).run();
+  refresh();
+}
+
 export async function deleteCompany(id: number) {
   const used = db.select().from(schema.jobs).where(eq(schema.jobs.companyId, id)).get();
   if (used) db.update(schema.companies).set({ priority: "paused" }).where(eq(schema.companies.id, id)).run();

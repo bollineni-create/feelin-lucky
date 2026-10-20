@@ -15,6 +15,13 @@
       "when": 1792400155245,
       "tag": "0001_auto_apply",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792484333505,
+      "tag": "0002_scan_note",
+      "breakpoints": true
     }
   ]
 }

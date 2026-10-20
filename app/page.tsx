@@ -263,7 +263,15 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                               {progress?.lastEventAt && isRunning ? ` (${ago(progress.lastEventAt)})` : ""}
                             </div>
                           ) : null}
-                          {r.errors?.length ? <div className="status-failed">{r.errors.slice(0, 2).join("; ")}</div> : null}
+                          {r.errors?.length ? (
+                            <ul className="run-errors">
+                              {r.errors.map((e, j) => (
+                                <li key={j} className="status-failed">
+                                  {e}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
                           {progress?.logLines.length ? (
                             <details className="run-log">
                               <summary className="small muted">Last {Math.min(progress.logLines.length, LOG_TAIL_LINES)} lines of the log</summary>

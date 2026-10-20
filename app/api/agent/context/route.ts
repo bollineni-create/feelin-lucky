@@ -121,6 +121,8 @@ export const GET = agentRoute(async (req) => {
       careers_url: c.careersUrl,
       ats_type: c.atsType,
       last_scanned_at: c.lastScannedAt,
+      // What stopped the last scan, if anything (e.g. a site Claude in Chrome won't open). Try once; if it's still blocked, move on.
+      scan_note: c.scanNote,
     })),
     companies_due_total: companiesDue.length,
     // The whole watchlist (not paused), so LinkedIn results can be checked against it.
