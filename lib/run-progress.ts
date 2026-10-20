@@ -24,6 +24,14 @@ export type RunProgress = {
   /** Browser tool calls that got a result, and ones answered "Browser extension is not connected". */
   browserOk: number;
   browserRefused: number;
+  /**
+   * How the latest answered browser call went: "ok" (the extension answered, even with an error about the
+   * page) or "refused" ("not connected"), or null before any browser call has an answer. With browserRefused,
+   * this tells a drop the agent is still waiting out from one the extension has come back from.
+   */
+  browserLast: "ok" | "refused" | null;
+  /** The agent's latest browser call has no answer yet (it's trying now). */
+  browserWaiting: boolean;
   /** Browser tool calls Claude in Chrome refused on its site permissions, and the hosts it refused. */
   siteBlocked: number;
   siteBlockedHosts: string[];
@@ -102,7 +110,7 @@ function safeLogPath(p: string | null): string | null {
 export function runProgress(run: Pick<Run, "logPath">): RunProgress | null {
   const log = safeLogPath(run.logPath);
   if (!log) return null;
-  const out: RunProgress = { logLines: [], toolCalls: null, toolCallsPartial: false, lastTool: null, lastText: null, lastEventAt: null, chrome: null, browserOk: 0, browserRefused: 0, siteBlocked: 0, siteBlockedHosts: [] };
+  const out: RunProgress = { logLines: [], toolCalls: null, toolCallsPartial: false, lastTool: null, lastText: null, lastEventAt: null, chrome: null, browserOk: 0, browserRefused: 0, browserLast: null, browserWaiting: false, siteBlocked: 0, siteBlockedHosts: [] };
   try {
     out.logLines = tail(log, 64 * 1024)
       .split("\n")
@@ -136,13 +144,18 @@ export function runProgress(run: Pick<Run, "logPath">): RunProgress | null {
     // whether the extension is actually answering, and which sites it refuses.
     const browserCalls = new Map<string, string | null>();
     const blockedHosts = new Set<string>();
+    // The browser call still waiting for its answer, if the latest one is.
+    let waiting: string | null = null;
     for (const e of events(text)) {
       if (e.type === "assistant") {
         for (const c of e.message?.content ?? []) {
           if (c.type === "tool_use" && c.name) {
             calls++;
             out.lastTool = c.name.replace(/^mcp__[^_]+(?:-[^_]+)*__/, "");
-            if (CHROME_TOOL.test(c.name) && c.id) browserCalls.set(c.id, hostOf(c.input?.url));
+            if (CHROME_TOOL.test(c.name) && c.id) {
+              browserCalls.set(c.id, hostOf(c.input?.url));
+              waiting = c.id;
+            }
           } else if (c.type === "text" && c.text?.trim()) {
             out.lastText = c.text.trim().slice(0, 240);
           }
@@ -152,17 +165,25 @@ export function runProgress(run: Pick<Run, "logPath">): RunProgress | null {
           if (c.type !== "tool_result") continue;
           const result = JSON.stringify(c.content ?? "");
           const browser = c.tool_use_id ? browserCalls.has(c.tool_use_id) : false;
-          if (result.includes(NOT_CONNECTED)) out.browserRefused++;
-          else if (browser && SITE_BLOCKED.test(result)) {
-            out.siteBlocked++;
-            const host = browserCalls.get(c.tool_use_id!);
-            if (host) blockedHosts.add(host);
-          } else if (browser && !c.is_error) out.browserOk++;
+          if (c.tool_use_id === waiting) waiting = null;
+          if (result.includes(NOT_CONNECTED)) {
+            out.browserRefused++;
+            out.browserLast = "refused";
+          } else if (browser) {
+            // Any other answer, an error about the page included, came from the extension.
+            out.browserLast = "ok";
+            if (SITE_BLOCKED.test(result)) {
+              out.siteBlocked++;
+              const host = browserCalls.get(c.tool_use_id!);
+              if (host) blockedHosts.add(host);
+            } else if (!c.is_error) out.browserOk++;
+          }
         }
       }
     }
     out.toolCalls = calls;
     out.toolCallsPartial = partial;
+    out.browserWaiting = waiting !== null;
     out.siteBlockedHosts = [...blockedHosts].sort();
   } catch {
     // Unreadable transcript; the log lines still say something.
@@ -177,14 +198,21 @@ export function progressLine(p: RunProgress, running: boolean): string {
   }
   const parts: string[] = [];
   const refused = `${p.browserRefused} browser call${p.browserRefused === 1 ? "" : "s"} answered "not connected"`;
+  // What the agent does about a call the extension doesn't answer (runbook hard rule 6), while the run is on.
+  const retrying = !running ? "" : p.browserWaiting ? "; the agent is trying again now" : "; the agent waits 20s, then 40s, between three tries before it fails the run";
+  const fix = "quit and reopen Chrome, then /chrome → Reconnect extension";
   if (p.chrome === "missing") parts.push("Claude in Chrome wasn't loaded, so the agent has no browser tools (see the error)");
-  else if (p.browserOk > 0) {
-    // The extension answered, whatever the init event said; only a later drop is worth a word.
-    if (p.browserRefused > 0) parts.push(`Claude in Chrome: ${refused}`);
+  else if (p.browserRefused > 0 && p.browserLast === "ok") {
+    // It didn't answer at some point and has answered since: slow to attach, or a drop it came back from.
+    parts.push(running ? `Claude in Chrome is answering again (${refused} earlier)` : `Claude in Chrome answered, after ${refused} earlier`);
+  } else if (p.browserRefused > 0 && p.browserOk > 0) {
+    // It answered, then stopped: the extension dropped mid-run (its service worker goes idle).
+    const calls = `${p.browserOk} call${p.browserOk === 1 ? "" : "s"}`;
+    parts.push(`Claude in Chrome stopped answering after ${calls} (${refused}${running ? retrying : `; the extension dropped mid-run: ${fix}`})`);
   } else if (p.browserRefused > 0) {
     // Claude Code's server was up when the extension didn't answer: the extension in Chrome is what's down.
-    const side = p.chrome === "connected" ? "; Claude Code's side was up, so the extension in Chrome has gone idle or is signed in to another account: quit and reopen Chrome, then /chrome → Reconnect extension" : "";
-    parts.push(`Claude in Chrome isn't answering (${refused}${side})`);
+    const side = p.chrome === "connected" ? `; Claude Code's side was up, so the extension in Chrome has gone idle or is signed in to another account: ${fix}` : "";
+    parts.push(`Claude in Chrome isn't answering (${refused}${running ? retrying : side})`);
   }
   else if (p.chrome === "pending") parts.push("Claude in Chrome: still connecting (the first browser call waits for it)");
   else if (p.chrome && p.chrome !== "connected") parts.push(`Claude in Chrome: ${p.chrome}`);

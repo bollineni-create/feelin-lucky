@@ -225,6 +225,8 @@ import json, sys, collections, re
 from urllib.parse import urlsplit
 tools, denied, result, servers, not_connected = collections.Counter(), [], None, None, 0
 browser_calls, browser_ok = {}, 0
+# How the latest answered browser call went ("ok": the extension answered, even with a page error; "not_connected").
+last_browser = None
 # How Claude in Chrome answers a call on a site its site permissions don't allow (kept in step with lib/run-progress.ts).
 SITE_BLOCKED = re.compile(r"not an allowed domain|not allowed (?:by|for|on)|site permissions?|permission (?:denied|required|not granted)|blocked (?:by|domain|site)|domain is (?:not|blocked)", re.I)
 site_blocked, blocked_hosts = 0, set()
@@ -246,11 +248,14 @@ for line in open(sys.argv[1]):
             if c.get("type") != "tool_result": continue
             text = json.dumps(c.get("content"))
             browser = c.get("tool_use_id") in browser_calls
-            if "Browser extension is not connected" in text: not_connected += 1
-            elif browser and SITE_BLOCKED.search(text):
-                site_blocked += 1
-                if browser_calls[c["tool_use_id"]]: blocked_hosts.add(browser_calls[c["tool_use_id"]])
-            elif browser and not c.get("is_error"): browser_ok += 1
+            if "Browser extension is not connected" in text:
+                not_connected += 1; last_browser = "not_connected"
+            elif browser:
+                last_browser = "ok"
+                if SITE_BLOCKED.search(text):
+                    site_blocked += 1
+                    if browser_calls[c["tool_use_id"]]: blocked_hosts.add(browser_calls[c["tool_use_id"]])
+                elif not c.get("is_error"): browser_ok += 1
     elif e.get("type") == "result":
         result = e.get("result")
         denied = [d.get("tool_name") for d in e.get("permission_denials") or []]
@@ -262,7 +267,11 @@ if browser_ok: print(f"--- Claude in Chrome answered {browser_ok} browser call(s
 elif servers is not None and servers.get("claude-in-chrome") != "connected":
     print("--- Claude in Chrome at start:", servers.get("claude-in-chrome") or "not added (sign in with /login, not an API key or setup-token)")
 if not_connected:
-    if browser_ok:
+    if last_browser == "ok":
+        # The extension answered after the refusal(s): slow to attach, or a drop it came back from. The agent
+        # waited it out (runbook hard rule 6), so there's nothing to fix unless it keeps happening.
+        print(f"--- {not_connected} browser tool call(s) answered 'Browser extension is not connected', and the extension answered after that (slow to attach, or a drop it came back from). Nothing to do unless it keeps happening; then fully quit and reopen Chrome, run 'claude --chrome' and use /chrome -> Reconnect extension.")
+    elif browser_ok:
         print(f"--- {not_connected} browser tool call(s) answered 'Browser extension is not connected' after the extension had been answering: it dropped mid-run (its service worker goes idle). Fully quit and reopen Chrome, then run 'claude --chrome' and use /chrome -> Reconnect extension.")
     elif (servers or {}).get("claude-in-chrome") == "connected":
         # Claude Code's server was up, so the extension in Chrome is what didn't attach. With Chrome open, the
