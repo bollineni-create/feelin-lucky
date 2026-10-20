@@ -260,10 +260,17 @@ export function runActivity(run: Pick<typeof runs.$inferSelect, "startedAt" | "f
     .groupBy(jobs.source)
     .all();
   const bySource = Object.fromEntries(found.map((r) => [r.source, r.n]));
+  // Jobs this run scored under the fit threshold: found, but closed on arrival and kept off the board.
+  const lowFit = db
+    .select({ n: sql<number>`count(*)` })
+    .from(applications)
+    .where(and(eq(applications.stage, "closed"), eq(applications.closedReason, "low_fit"), sql`${applications.stageChangedAt} >= ${from}`, sql`${applications.stageChangedAt} <= ${to}`))
+    .get()!.n;
   return {
     companies_scanned: scanned,
     jobs_found: found.reduce((s, r) => s + r.n, 0),
     jobs_found_careers: bySource.careers ?? 0,
     jobs_found_linkedin: bySource.linkedin ?? 0,
+    jobs_closed_low_fit: lowFit,
   };
 }

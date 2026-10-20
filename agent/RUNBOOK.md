@@ -26,7 +26,7 @@ agent/api.sh UPLOAD 42 logs/tmp/confirm-42.png "Confirmation #A1B2"
 
 | Call | Use |
 |---|---|
-| `GET /api/agent/runs/$RUN_ID` | The run, plus `activity`: what the app recorded for this run (`companies_scanned`, `jobs_found`, by source). Check it before you finish |
+| `GET /api/agent/runs/$RUN_ID` | The run, plus `activity`: what the app recorded for this run (`companies_scanned`, `jobs_found` by source, `jobs_closed_low_fit`). Check it before you finish |
 | `GET /api/agent/context` | Criteria, profile, `companies_due`, `watchlist_companies`, `approved_to_submit`, `auto_apply` (settings and today's count), `auto_apply_to_submit`, `open_applications`, `jobs_needing_score`, `jobs_needing_materials`, `skip_feedback` |
 | `PATCH /api/agent/runs/$RUN_ID` | `{"phase": "...", "counts": {...}, "errors": ["..."], "status": "ok"\|"failed"}`. Counts and errors merge, so you can send them as you go |
 | `POST /api/agent/jobs` | `{"run_id": N, "jobs": [{company, company_id?, title, location, work_mode, source: "careers"\|"linkedin", url, external_id?, pay_text?, posted_at? (YYYY-MM-DD), description?, fit_score?, fit_reasons?, linkedin_status?}]}`. Max 200 per call. The server dedupes on company + title + location and auto-closes anything under threshold |
