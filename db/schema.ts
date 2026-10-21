@@ -97,7 +97,8 @@ export const runs = sqliteTable("runs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   startedAt: text("started_at").notNull().$defaultFn(now),
   finishedAt: text("finished_at"),
-  // The phases the run was started with (e.g. "submit,find,prepare,track"); never changed afterwards.
+  // The phases the run was started with (e.g. "submit,scan,prepare,track" for the watchlist scan,
+  // "submit,search,prepare" for the job search; "find" in older runs did both); never changed afterwards.
   phase: text("phase").notNull().default("all"),
   // The phase the agent says it is in right now, for a run in progress.
   currentPhase: text("current_phase"),
