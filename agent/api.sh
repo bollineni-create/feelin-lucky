@@ -4,6 +4,7 @@
 #   agent/api.sh POST  /api/agent/jobs  path/to/body.json     (or "-" to read JSON from stdin)
 #   agent/api.sh PATCH /api/agent/applications/12 '{"stage":"applied"}'
 #   agent/api.sh UPLOAD <application_id> <png-file> [confirmation text]
+# APP_CURL_MAX_TIME=<seconds> gives up on a call that takes longer (the server carries on).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,6 +26,7 @@ fi
 path="${1:?path}"
 body="${2:-}"
 args=(-sS --fail-with-body -X "$method" "$APP_URL$path" -H "Authorization: Bearer $AGENT_TOKEN")
+[ -n "${APP_CURL_MAX_TIME:-}" ] && args+=(--max-time "$APP_CURL_MAX_TIME")
 if [ -n "$body" ]; then
   args+=(-H "Content-Type: application/json")
   if [ "$body" = "-" ]; then args+=(--data-binary @-)

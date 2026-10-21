@@ -2,10 +2,11 @@ import Link from "next/link";
 import { desc, eq, inArray, ne } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { STAGE_LABEL, listApplications, type AppWithJob } from "@/lib/logic";
-import { KIND_LABEL, getMailSettings, mailLink, summaryText } from "@/lib/mail";
+import { KIND_LABEL, getMailSettings, mailCheckGoing, mailLink, summaryText } from "@/lib/mail";
 import { LIVE_STAGES } from "@/lib/mail-rules";
 import { ago, fmtDateTime } from "@/lib/format";
 import { RunButton } from "@/components/RunButton";
+import { AutoRefresh } from "@/components/AutoRefresh";
 import type { Email, EmailKind } from "@/db/schema";
 import { checkMailNow, connectMail, reopenEmailAction, resolveEmailAction, saveMailSettings, turnOffMail } from "../actions";
 
@@ -48,7 +49,11 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
   const inFlight = apps.filter((a) => a.stage !== "found").sort(byName);
   const found = apps.filter((a) => a.stage === "found").sort(byName);
   const byId = new Map(apps.map((a) => [a.id, a]));
+  // An email already tied to an application that has since closed still shows it, so you can see what you'd save to.
+  const elsewhere = [...new Set(review.flatMap((e) => (e.applicationId ? [e.applicationId] : (e.candidateIds ?? []))))].filter((id) => !byId.has(id));
+  if (elsewhere.length) for (const a of listApplications(inArray(schema.applications.id, elsewhere))) byId.set(a.id, a);
   const known = s.knownAccounts ?? [];
+  const checking = s.enabled && mailCheckGoing();
 
   return (
     <>
@@ -69,6 +74,8 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
         </div>
       </div>
 
+      {checking ? <AutoRefresh seconds={10} /> : null}
+      {checking ? <div className="banner ok">Checking Mail now; this page updates when it&apos;s done.</div> : null}
       {sp.saved ? <div className="banner ok">Saved.</div> : null}
       {sp.error ? <div className="banner">{sp.error}</div> : null}
       {s.enabled && s.lastError ? (

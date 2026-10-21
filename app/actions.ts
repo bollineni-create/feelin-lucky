@@ -7,7 +7,7 @@ import { db, schema } from "@/lib/db";
 import { changeStage, getApplication, hasMaterials, iso, logEvent } from "@/lib/logic";
 import { renderMaterials } from "@/lib/render";
 import { startAgentRun, stopAgentRun } from "@/lib/runner";
-import { checkMail, getMailSettings, reopenEmail, resolveEmail, updateMailSettings, type Resolution } from "@/lib/mail";
+import { checkMailBriefly, getMailSettings, reopenEmail, resolveEmail, updateMailSettings, type Resolution } from "@/lib/mail";
 import { ApiError } from "@/lib/agent-auth";
 import { HIGHLIGHTS, PRIORITIES, SOURCES, STAGES, type Highlight, type Priority, type Stage, type WorkEntry, type EducationEntry, type BroadSearch, type Source } from "@/db/schema";
 
@@ -263,16 +263,20 @@ export async function saveCriteria(formData: FormData) {
 
 // ---------- Mail ----------
 
+const STILL_CHECKING = "Still reading Mail; this page shows what it found when it's done.";
+
 export async function connectMail() {
   updateMailSettings({ enabled: true, updatedAt: iso() });
-  const r = await checkMail({ launch: true });
+  const r = await checkMailBriefly();
   refresh();
+  if (!r) return { ok: true as const, message: `Connected. ${STILL_CHECKING}` };
   return r.ok ? { ok: true as const, message: `Connected. ${r.message}` } : r;
 }
 
 export async function checkMailNow() {
-  const r = await checkMail({ launch: true });
+  const r = await checkMailBriefly();
   refresh();
+  if (!r) return { ok: true as const, message: STILL_CHECKING };
   return r.ok ? { ok: true as const, message: r.message } : r;
 }
 
@@ -320,6 +324,7 @@ export async function resolveEmailAction(id: number, formData: FormData) {
   let error: string | null = null;
   try {
     if (what === "dismiss") resolveEmail(id, { dismiss: true }, "you");
+    else if (!applicationId) error = 'Pick which application it\'s about, or "Not about any application here".';
     else if (EMAIL_CHOICES[what]) {
       const choice = { ...EMAIL_CHOICES[what], applicationId };
       try {
@@ -334,10 +339,12 @@ export async function resolveEmailAction(id: number, formData: FormData) {
     error = err instanceof Error ? err.message : "Couldn't save that.";
   }
   refresh();
-  if (error) redirect(`/mail?error=${encodeURIComponent(error)}#review`);
+  // A redirect either way, so an error from an earlier try doesn't stay on the page.
+  redirect(error ? `/mail?error=${encodeURIComponent(error)}#review` : "/mail#review");
 }
 
 export async function reopenEmailAction(id: number) {
   reopenEmail(id);
   refresh();
+  redirect("/mail#review");
 }

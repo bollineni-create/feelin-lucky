@@ -37,21 +37,22 @@ main() {
   RUN_PID="$(cat logs/.run.lock/pid 2>/dev/null)"
   [ -d logs/.run.lock ] && { [ -z "$RUN_PID" ] || ps -o stat= -p "$RUN_PID" 2>/dev/null | grep -qv Z; } && { tell "The agent is running. Lodestar will update when it's done."; exit 0; }
 
-  # Installs from before email tracking start the server through npm (`npm start`), which macOS won't let control
-  # Mail. Rewrite that launch agent to run node itself (once; it restarts the server, so only when no agent run is
-  # going).
-  APP_PLIST="$HOME/Library/LaunchAgents/com.jobhunt.app.plist"
-  if [ -f "$APP_PLIST" ] && [ "$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:1" "$APP_PLIST" 2>/dev/null)" = "start" ]; then
-    if bash scripts/install-launchd.sh --app-only >>"$LOG" 2>&1; then log "Moved com.jobhunt.app to run node directly (needed for Apple Mail access)."
-    else log "Couldn't rewrite com.jobhunt.app; run 'Install Job Hunt.command' again."; fi
-  fi
-
   LOCK="logs/.update.lock"
   if ! mkdir "$LOCK" 2>/dev/null; then
     [ -n "$(find "$LOCK" -maxdepth 0 -mmin +60 2>/dev/null)" ] || { tell "An update is already being installed."; exit 0; }
     rm -rf "$LOCK" && mkdir "$LOCK"
   fi
   trap 'rm -rf "$LOCK"; [ -n "${TMP:-}" ] && rm -rf "$TMP"' EXIT
+
+  # Installs from before email tracking start the server through npm (`npm start`), which macOS won't let control
+  # Mail. Rewrite that launch agent to run node itself (once; it restarts the server, so only when no agent run is
+  # going). If restarting it failed, the marker has the next check try again.
+  APP_PLIST="$HOME/Library/LaunchAgents/com.jobhunt.app.plist"
+  RETRY="logs/.app-agent-retry"
+  if [ -f "$APP_PLIST" ] && { [ "$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:1" "$APP_PLIST" 2>/dev/null)" = "start" ] || [ -f "$RETRY" ]; }; then
+    if bash scripts/install-launchd.sh --app-only >>"$LOG" 2>&1; then rm -f "$RETRY"; log "Moved com.jobhunt.app to run node directly (needed for Apple Mail access)."
+    else touch "$RETRY"; log "Couldn't restart com.jobhunt.app; trying again on the next check. Or run 'Install Job Hunt.command' again."; fi
+  fi
 
   LATEST="$(curl -fsSL -H "Accept: application/vnd.github.sha" "https://api.github.com/repos/$REPO/commits/$BRANCH" 2>/dev/null)"
   # Offline or rate-limited; try again next time.

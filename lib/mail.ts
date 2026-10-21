@@ -96,7 +96,11 @@ export const NOT_A_MAC = "Email tracking reads Apple Mail, so it only works with
 export function explainMailError(raw: string, code?: number | null): string {
   const text = raw.trim();
   if (code === -1743 || /-1743|not authori[sz]ed to send apple events/i.test(text)) {
-    return 'macOS hasn\'t allowed Lodestar to use Mail. Open System Settings → Privacy & Security → Automation, find "node" (the program Lodestar\'s server runs as) and turn on Mail under it, then click Check mail now. If node isn\'t listed, macOS hasn\'t asked yet: click Check mail now while you\'re at the Mac and choose OK.';
+    // Started through npm (an install from before email tracking, or `npm start` by hand), macOS refuses without asking.
+    if (["start", "dev"].includes(process.env.npm_lifecycle_event ?? "")) {
+      return "macOS won't let Lodestar use Mail while its server is started through npm. Run Install Job Hunt.command again (or scripts/install-launchd.sh --app-only) so it runs as node, then click Check mail now and choose OK. (Allowed under System Settings → Privacy & Security → Automation.)";
+    }
+    return 'macOS hasn\'t allowed Lodestar to use Mail. Open System Settings → Privacy & Security → Automation, find "node" (the program Lodestar\'s server runs as) and turn on Mail under it, then click Check mail now. If node isn\'t listed, macOS hasn\'t asked yet: click Check mail now while you\'re at the Mac and choose OK. No prompt? Run Install Job Hunt.command again so the server runs as node. (A server started in Terminal is listed under Terminal.)';
   }
   if (code === -1744 || /-1744|user consent|consent is required/i.test(text)) {
     return "macOS needs your OK before Lodestar can use Mail. Click Check mail now while you're at the Mac and choose OK when macOS asks whether node may control Mail.";
@@ -188,8 +192,9 @@ function attach(e: Email, appId: number, o: { kind: EmailKind; source: Source; r
   const replaceable = !app.nextAction || app.nextAction === "Follow up" || app.nextAction.startsWith("Read the email from");
 
   if (o.review) {
-    // It needs reading: say so on the card, unless something more specific is already there.
-    if (app.stage !== "closed" && o.kind !== "confirmation" && o.kind !== "update" && replaceable) {
+    // It needs reading: say so on the card, unless something more specific is already there (or the email is one
+    // recorded quietly, below).
+    if (o.announce && app.stage !== "closed" && o.kind !== "confirmation" && replaceable) {
       extra.nextAction = `Read the email from ${company}`;
       extra.nextActionDue = iso();
     }
@@ -253,8 +258,8 @@ function refreshLastEmail(appId: number) {
 }
 
 /**
- * Confirmations and status updates recorded during a run leave a found or approved application where it was (see
- * attach). Once no run is going, they move it to applied, unless someone has moved the application since.
+ * Confirmations recorded during a run leave a found or approved application where it was (see attach). Once no run is
+ * going, they move it to applied, unless someone has moved the application since.
  */
 function settleDeferred() {
   if (activeRun()) return;
@@ -266,7 +271,7 @@ function settleDeferred() {
       and(
         eq(emails.status, "done"),
         eq(emails.matchedBy, "title"),
-        inArray(emails.kind, ["confirmation", "update"]),
+        eq(emails.kind, "confirmation"),
         inArray(applications.stage, ["found", "approved"]),
         // Moved since the email was recorded (you set it back to found, say): that's a decision, leave it.
         sql`${applications.stageChangedAt} <= ${emails.resolvedAt}`,
@@ -325,6 +330,17 @@ export function checkMail(opts: { launch?: boolean } = {}): Promise<MailCheckRes
   return done;
 }
 
+/** A check is going right now (from the timer, the morning run or a button). */
+export const mailCheckGoing = () => Boolean(g.__lodestarMailCheck);
+
+/**
+ * A check started from a button: waited on for a while, and past that left to carry on, so the page's other buttons
+ * aren't held up behind a first read that takes minutes. Null when it's still going.
+ */
+export function checkMailBriefly(waitMs = 20_000): Promise<MailCheckResult | null> {
+  return Promise.race([checkMail({ launch: true }), new Promise<null>((done) => setTimeout(() => done(null), waitMs).unref?.())]);
+}
+
 export function summaryText(s: MailCheckSummary) {
   if (s.skipped) return s.skipped;
   const parts = [`looked at ${s.looked_at} message${s.looked_at === 1 ? "" : "s"}`];
@@ -343,7 +359,9 @@ async function runCheck({ launch = false }: { launch?: boolean }): Promise<MailC
   try {
     if (launch) await launchMail();
     const cands = candidates();
-    const since = iso(daysAgo(firstCheck ? s.lookbackDays : Math.min(s.lookbackDays, RECHECK_DAYS)));
+    // A check that had more to read than it could (oldest first) leaves the rest for the next one, which starts where
+    // that one did rather than RECHECK_DAYS back; what's been read is skipped.
+    const since = s.backfillFrom ?? iso(daysAgo(firstCheck ? s.lookbackDays : Math.min(s.lookbackDays, RECHECK_DAYS)));
     const known = new Set(db.select({ m: emails.messageId }).from(emails).where(gte(emails.receivedAt, since)).all().map((r) => r.m));
     const skip = seen();
     const list = await bridge<ListOut>({
@@ -391,8 +409,11 @@ async function runCheck({ launch = false }: { launch?: boolean }): Promise<MailC
       fileProblem = `Read your mail, but couldn't file it: ${err instanceof Error ? err.message : String(err)}`;
     }
     const unread = list.problems?.length ? ` Couldn't read ${list.problems.join("; ")}.` : "";
+    const more = Boolean(list.truncated || list.unread);
     updateMailSettings({
       knownAccounts: list.accounts ?? s.knownAccounts,
+      // (A body Mail hasn't downloaded yet is read again anyway: it's inside the window the next check reads.)
+      backfillFrom: list.truncated ? since : null,
       lastCheckAt: iso(),
       lastOkAt: iso(),
       lastError: fileProblem ?? (unread ? unread.trim() : null),
@@ -401,7 +422,7 @@ async function runCheck({ launch = false }: { launch?: boolean }): Promise<MailC
     return {
       ok: true,
       summary,
-      message: `Checked: ${summaryText(summary)}.${list.truncated || list.unread ? " More to read; the next check carries on." : ""}${unread}${fileProblem ? ` ${fileProblem}` : ""}`,
+      message: `Checked: ${summaryText(summary)}.${more ? " More to read; the next check carries on." : ""}${unread}${fileProblem ? ` ${fileProblem}` : ""}`,
     };
   } catch (err) {
     const error = err instanceof MailError ? err.message : explainMailError(err instanceof Error ? err.message : String(err));
@@ -448,7 +469,9 @@ function recordNew(m: BridgeMessage, sender: Sender, match: ReturnType<typeof ma
     .returning()
     .get();
   if (!row) return null;
-  if (app) attach(row, app.id, { kind: c.kind, source: "mail", review: !done, announce: true, matchedBy: match.matchedBy });
+  // A guess at the application from an address that doesn't vouch for the company (a scam "interview" in Junk that
+  // names a company you applied to) waits on the Mail page: no event, next action or notification.
+  if (app) attach(row, app.id, { kind: c.kind, source: "mail", review: !done, announce: match.trusted || match.matchedBy === "title", matchedBy: match.matchedBy });
   return row;
 }
 
@@ -464,7 +487,9 @@ function announce(fresh: Email[], firstCheck: boolean, lookbackDays: number) {
   }
   // Only what arrived in the last day: a check catching up on older mail doesn't announce it.
   const recent = fresh.filter((e) => Date.parse(e.receivedAt) > Date.now() - DAY);
-  const notable = recent.filter((e) => e.applicationId && (e.kind === "rejection" || (e.status === "review" && e.kind !== "confirmation" && e.kind !== "update")));
+  const notable = recent.filter(
+    (e) => e.applicationId && (e.trusted || e.matchedBy === "title") && (e.kind === "rejection" || (e.status === "review" && e.kind !== "confirmation")),
+  );
   for (const e of notable.slice(0, 3)) {
     const app = getApplication(e.applicationId!);
     const what = e.kind === "rejection" && e.status === "done" ? "Not moving forward" : `${KIND_LABEL[e.kind] === "Other" ? "New email" : KIND_LABEL[e.kind]}: ${e.subject}`;

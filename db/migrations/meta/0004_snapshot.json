@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "cbd05344-2d04-48f6-a294-4c19fe57c4ca",
+  "id": "f320d8ae-3167-42f7-b187-92bfeb64f995",
   "prevId": "f0a96f4b-b7a4-48f0-baf9-4afb0b8f6cc3",
   "tables": {
     "applications": {
@@ -840,6 +840,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": 30
+        },
+        "backfill_from": {
+          "name": "backfill_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "known_accounts": {
           "name": "known_accounts",

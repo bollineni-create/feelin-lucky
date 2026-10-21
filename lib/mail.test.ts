@@ -316,3 +316,39 @@ test("payslips and benefits mail from an HR system aren't kept", async () => {
   assert.ok((await M.checkMail()).ok);
   assert.equal(emailBy("Your payslip for October is available"), undefined);
 });
+
+test("a guess from an address that doesn't vouch for the company waits on the Mail page without a notice", async () => {
+  const before = app("ramp").nextAction;
+  setMail((s) => {
+    const inbox = s.accts[0].boxes[0];
+    inbox.msgs.push({ id: s.nextId++, messageId: "scam2@x", sender: "Ramp Talent <ramp.talent.hr@gmail.com>", subject: "Your application for Remote Assistant at Ramp", date: hoursAgo(1), content: "We'd like to invite you to an interview on Telegram today.", flagged: false, junk: false, deleted: false, box: inbox });
+  });
+  assert.ok((await M.checkMail()).ok);
+  const e = emailBy("Your application for Remote Assistant at Ramp")!;
+  assert.equal(e.status, "review");
+  assert.equal(e.applicationId, ids.ramp);
+  assert.equal(app("ramp").nextAction, before);
+  assert.ok(!D.db.select().from(D.schema.events).all().some((ev) => ev.title.includes("Remote Assistant")));
+  await new Promise((done) => setTimeout(done, 500));
+  assert.ok(!fs.readFileSync(NOTES, "utf8").includes("Remote Assistant"));
+});
+
+test("a first read with more job mail than one check reads is finished by the next check", async () => {
+  M.updateMailSettings({ lastOkAt: null, backfillFrom: null });
+  setMail((s) => {
+    const inbox = s.accts[1].boxes[0];
+    // Older than the 10 days later checks look back.
+    for (let i = 0; i < 85; i++) {
+      inbox.msgs.push({ id: s.nextId++, messageId: `old${i}@acme`, sender: "Acme <no-reply@greenhouse-mail.io>", subject: `Backfill ${i}`, date: hoursAgo(24 * 20 - i), content: "Thank you for applying to Acme. We received your application.", flagged: false, junk: false, deleted: false, box: inbox });
+    }
+  });
+  const first = await M.checkMail();
+  assert.ok(first.ok && first.message.includes("More to read"), first.ok ? first.message : first.error);
+  assert.ok(M.getMailSettings().backfillFrom);
+  const read = () => D.db.select().from(D.schema.emails).all().filter((e) => e.subject.startsWith("Backfill ")).length;
+  assert.equal(read(), 80);
+  const second = await M.checkMail();
+  assert.ok(second.ok && !second.message.includes("More to read"));
+  assert.equal(read(), 85);
+  assert.equal(M.getMailSettings().backfillFrom, null);
+});

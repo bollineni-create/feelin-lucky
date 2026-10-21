@@ -40,6 +40,7 @@ CREATE TABLE `mail_settings` (
 	`notify` integer DEFAULT true NOT NULL,
 	`accounts` text DEFAULT '[]' NOT NULL,
 	`lookback_days` integer DEFAULT 30 NOT NULL,
+	`backfill_from` text,
 	`known_accounts` text,
 	`last_check_at` text,
 	`last_ok_at` text,

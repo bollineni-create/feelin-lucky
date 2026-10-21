@@ -4,8 +4,9 @@ import { resolveEmail } from "@/lib/mail";
 import { EMAIL_KINDS, STAGES } from "@/db/schema";
 
 // Settles an email from the context's mail.to_review: which application it's about, what it says and, optionally,
-// the stage it moves the application to (forward only; never to approved). Or { "dismiss": true } when it isn't
-// about any application in Lodestar.
+// the stage it moves the application to (forward only; never to approved). Without a stage, the kind's usual move
+// applies (see emailStageMove); the application's current stage records the email without moving it. Or
+// { "dismiss": true } when it isn't about any application in Lodestar.
 const Body = z.union([
   z.object({ dismiss: z.literal(true), summary: z.string().max(300).optional() }),
   z.object({

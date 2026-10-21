@@ -197,6 +197,8 @@ export const mailSettings = sqliteTable("mail_settings", {
   // Mail account names to read; empty reads them all.
   accounts: text("accounts", { mode: "json" }).$type<string[]>().notNull().default([]),
   lookbackDays: integer("lookback_days").notNull().default(30),
+  // Where the next check starts while a check that had more to read than it could is catching up.
+  backfillFrom: text("backfill_from"),
   knownAccounts: text("known_accounts", { mode: "json" }).$type<string[]>(),
   lastCheckAt: text("last_check_at"),
   lastOkAt: text("last_ok_at"),

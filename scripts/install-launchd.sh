@@ -17,6 +17,18 @@ UPDATE_PLIST="$AGENTS/com.jobhunt.update.plist"
 UID_NUM="$(id -u)"
 
 unload() { launchctl bootout "gui/$UID_NUM" "$1" 2>/dev/null || true; }
+# bootout returns before launchd has let go of the job, and bootstrapping it again straight away can fail
+# ("Input/output error"): wait for it to go, then try a few times.
+load() {
+  local label i
+  label="$(basename "$1" .plist)"
+  for i in $(seq 1 20); do launchctl print "gui/$UID_NUM/$label" >/dev/null 2>&1 || break; sleep 0.5; done
+  for i in 1 2 3 4; do
+    launchctl bootstrap "gui/$UID_NUM" "$1" 2>/dev/null && return 0
+    sleep "$i"
+  done
+  launchctl bootstrap "gui/$UID_NUM" "$1"
+}
 
 if [ "${1:-}" = "--remove" ]; then
   unload "$APP_PLIST"; unload "$DAILY_PLIST"; unload "$UPDATE_PLIST"
@@ -25,7 +37,14 @@ if [ "${1:-}" = "--remove" ]; then
 fi
 
 [ "$(uname)" = "Darwin" ] || { echo "launchd is macOS only."; exit 1; }
-NODE_BIN="$(command -v node)" || { echo "node not found"; exit 1; }
+# Rewriting the app's launch agent keeps the node the install chose (better-sqlite3 is built for it): the one next to
+# the npm or node the existing agent runs. Otherwise, the node on PATH (Install Job Hunt.command puts its pick first).
+NODE_BIN=""
+if [ "${1:-}" = "--app-only" ] && [ -f "$APP_PLIST" ]; then
+  PROG="$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" "$APP_PLIST" 2>/dev/null || true)"
+  [ -n "$PROG" ] && [ -x "$(dirname "$PROG")/node" ] && NODE_BIN="$(dirname "$PROG")/node"
+fi
+[ -n "$NODE_BIN" ] || NODE_BIN="$(command -v node)" || { echo "node not found"; exit 1; }
 NODE_DIR="$(dirname "$NODE_BIN")"
 CLAUDE_DIR="$(dirname "$(command -v claude 2>/dev/null || echo /usr/local/bin/claude)")"
 TZ_NAME="$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')"
@@ -63,7 +82,7 @@ PLIST
 if [ "${1:-}" = "--app-only" ]; then
   write_app_plist
   unload "$APP_PLIST"
-  launchctl bootstrap "gui/$UID_NUM" "$APP_PLIST"
+  load "$APP_PLIST"
   echo "Reinstalled com.jobhunt.app (runs $NODE_BIN)."; exit 0
 fi
 write_app_plist
@@ -109,7 +128,7 @@ PLIST
 
 for p in "$APP_PLIST" "$DAILY_PLIST" "$UPDATE_PLIST"; do
   unload "$p"
-  launchctl bootstrap "gui/$UID_NUM" "$p"
+  load "$p"
 done
 echo "Installed. App: http://127.0.0.1:3000 · daily run: weekdays 7:00 AM ($TZ_NAME) · updates from GitHub: checked every 15 minutes."
 [ "$TZ_NAME" = "America/Los_Angeles" ] || echo "Note: this Mac isn't on Pacific time, so 7:00 AM is local time."
