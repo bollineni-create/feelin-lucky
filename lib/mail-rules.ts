@@ -129,7 +129,7 @@ const REJECTION = [
   /\bapplication_rejected\b/i,
   /\bunfortunately,? .{0,60}\bhas moved (?:on|to the next step)/i,
   /\b(?:won't|will not|wouldn't|would not|can't|cannot|are unable to|unable to|not able to) (?:be )?(?:able to )?(?:mov(?:e|ing) forward|proceed(?:ing)?(?: further)? with (?:your|the) (?:application|candidacy)|advanc(?:e|ing) (?:you|your)|offer(?:ing)? you (?:the|this|a|an) (?:position|role|job)|progress(?:ing)? (?:with )?your (?:application|candidacy)|pursu(?:e|ing) your|(?:make|extend)(?:ing)? (?:you )?an offer)/i,
-  /\bdecided (?:not to (?:move|proceed|pursue|advance|progress)|to (?:move|proceed|go) (?:forward )?with (?:other|another|a different) (?:candidates?|applicants?|individuals?|persons?|people|profiles?)|to pursue (?:other|another) (?:candidates?|applicants?)|to go (?:in|with) a different direction)/i,
+  /\bdecided (?:not to (?:move|proceed|pursue|advance|progress|offer)|to (?:move|proceed|go) (?:forward )?with (?:other|another|a different) (?:candidates?|applicants?|individuals?|persons?|people|profiles?)|to pursue (?:other|another) (?:candidates?|applicants?)|to go (?:in|with) a different direction)/i,
   /\bpursue other candidates\b/i,
   /\b(?:move|moving|proceed|proceeding|go|going) forward with (?:other|another) (?:candidates?|applicants?)\b/i,
   /\b(?:selected|chosen|chose|hired|identified) (?:an? |the )?(?:other |another |a different |more qualified )?(?:candidates?|applicants?|individual|person) (?:whose|who|that)\b/i,
@@ -148,7 +148,9 @@ const REJECTION = [
   /\b(?:decided|chosen|chose|elected) to (?:hire|go with|pursue|select) (?:someone|another|a different|other|an internal|a candidate|candidates|applicants)\b|\bgo(?:ing)? with someone else\b/i,
   /\b(?:you|application|candidacy) (?:have|has|were|was) (?:been )?unsuccessful\b|\b(?:you|application|candidacy) (?:were|was|have|has) not (?:been )?(?:chosen|successful)\b/i,
   /\bnot (?:be )?continu(?:e|ing) (?:forward )?with your (?:application|candidacy)\b|\b(?:another|a different) direction\b/i,
-  /\b(?:unfortunately|regrettably|sadly),? .{0,40}\b(?<!\bonly (?:be )?)(?:(?:mov(?:e|ing)|proceed(?:ing)?|go(?:ing)?) (?:forward|ahead)|progress(?:ing)?) with (?:a |the )?(?:other |another )?(?:candidates?|applicants?|someone)\b/i,
+  /\bunfortunately,? .{0,40}\b(?<!\bonly (?:be )?)(?:(?:mov(?:e|ing)|proceed(?:ing)?|go(?:ing)?) (?:forward|ahead)|progress(?:ing)?) with (?:a |the )?(?:other |another )?(?:candidates?|applicants?|someone(?![^.\n]{0,40}\b(?:phone screen|screen|interview|call|chat|meeting)\b))\b/i,
+  // (Not "sadly, Jordan is out sick, so we'll be going ahead with someone else from the team for your phone screen".)
+  /\b(?:regrettably|sadly),? .{0,40}\b(?<!\bonly (?:be )?)(?:(?:mov(?:e|ing)|proceed(?:ing)?|go(?:ing)?) (?:forward|ahead)|progress(?:ing)?) with (?:a |the )?(?:other |another )?(?:candidates?|applicants?|someone (?:else )?(?:whose|who))\b/i,
   /\b(?:not|won't|will not|unable to) (?:be )?(?:inviting|invite) you (?:to|for) (?:an? )?interview\b/i,
   /\b(?:unable to|not able to|won't|will not|can't|cannot) (?:be )?(?:take|taking) your (?:application|candidacy) (?:any )?(?:forward|further)\b/i,
 ];
@@ -160,7 +162,7 @@ const YOU = /\b(?:you|your|yours)\b/i;
 // A decision that picks other people ("we have decided to move forward with candidates whose…") isn't candidates in
 // general; "we regret we can't give feedback to candidates who were not selected" is.
 const DECISION = /\b(?:decided|chosen|chose|elected|made the decision|unfortunately|regret(?:tably)?)\b/i;
-const CHOSEN = /\b(?:mov(?:e|ing)|proceed(?:ing)?|go(?:ing)?|continu(?:e|ing)|progress(?:ing)?) (?:forward |ahead )?with (?:a |an |the )?(?:other )?(?:candidates?|applicants?|individuals?|people|profiles?)\b|\b(?:pursue|select|hire) (?:other )?(?:candidates|applicants)\b|\b(?:have|has|'ve|had) (?:now )?(?:selected|chosen|identified|hired)\b/i;
+const CHOSEN = /\b(?:mov(?:e|ing)|proceed(?:ing)?|go(?:ing)?|continu(?:e|ing)|progress(?:ing)?) (?:forward |ahead )?with (?:a |an |the )?(?:other )?(?:candidates?|applicants?|individuals?|people|profiles?)\b|\b(?:pursue|select|hire) (?:other )?(?:candidates|applicants)\b|\b(?:have|has|'ve|had) (?:now |already |since |ultimately )?(?:selected|chosen|identified|hired|shortlisted)\b/i;
 // "We can't move forward with every applicant": the volume of applications, not a decision on you.
 const EVERYONE = /\bwith (?:every|each|all|most|many)\b|\b(?:everyone|everybody)\b/i;
 const rejects = (text: string) =>
@@ -171,7 +173,7 @@ const rejects = (text: string) =>
         (s) =>
           !hypothetical(s) &&
           !/\bwithout\b/i.test(s) &&
-          !(GENERAL_PEOPLE.test(s) && !YOU.test(s) && !(DECISION.test(s) && CHOSEN.test(s))) &&
+          !(GENERAL_PEOPLE.test(s) && !YOU.test(s) && (!DECISION.test(s) || disclaimer(s))) &&
           !(EVERYONE.test(s) && !YOU.test(s)) &&
           anyIn(REJECTION, s),
       ),
@@ -185,7 +187,8 @@ const STILL_OPEN =
 const CORRECTION = /\b(?:in error|by mistake|mistakenly|disregard)\b/i;
 const CLOSED_POSTING = /\b(?:no longer accepting (?:new )?applications|closed to new (?:applicants|applications))\b/i;
 const FILLED = /\b(?:position|role|job|opening|requisition) (?:has|have) (?:now )?been filled\b|\bfilled (?:the|this) (?:position|role|opening)\b/i;
-const stillOpen = (text: string) => STILL_OPEN.test(text) || says([CORRECTION], text) || (CLOSED_POSTING.test(text) && !FILLED.test(text));
+const CORRECTION_FOOTER = /\b(?:received this(?: (?:e-?mail|message|communication|transmission|notification))?|this (?:e-?mail|message) (?:was|has been) sent to you) (?:in error|by mistake)\b/i;
+const stillOpen = (text: string) => STILL_OPEN.test(text) || sentences(text).some((s) => CORRECTION.test(s) && !CORRECTION_FOOTER.test(s)) || (CLOSED_POSTING.test(text) && !FILLED.test(text));
 
 const OFFER = [
   /\boffer letter\b/i,
@@ -197,7 +200,7 @@ const OFFER = [
   /\b(?:review|accept|sign)(?: and (?:accept|sign))? (?:your|the) (?:job |employment )?offer\b/i,
   // "We would like to offer you the position", "It is my pleasure to offer you…", "you've been selected for the
   // role", "we'd love to have you join us as our next ___" (not "unable to offer you the position").
-  /\b(?:pleasure|privilege) to offer you\b(?! (?:an? |the )?(?:interview|call|chat|conversation|phone screen))|(?<!(?:\bnot|\bunable|\bcannot|n't|\bnever)\b[\w' ]{0,40})\boffer you (?:(?:the|this|a|an) (?:(?!interview|call|chat|conversation|screen|meeting|opportunity|chance)[\w-]+ ){0,3}?(?:position|role|job)|employment)\b/i,
+  /\b(?:pleasure|privilege) to offer you\b(?! (?:an? |the )?(?:interview|call|chat|conversation|phone screen))|(?<!(?:\bnot|n't|\bunable|\bcannot|\bnever)(?: (?:currently|presently))?(?: be)?(?: (?:able|in a position|going|prepared|ready|willing|planning))?(?: at this (?:time|stage|point))?(?: to)? )\boffer you (?:(?:the|this|a|an) (?:(?!interview|call|chat|conversation|screen|meeting|opportunity|chance)[\w-]+ ){0,3}?(?:position|role|job)|employment)\b/i,
   /\byou(?:'ve| have)? been (?:selected|chosen) for the (?:position|role|job)\b|\bhave you join (?:us|our team|the team) as (?:our|a|an|the)\b(?![^.\n]{0,30}\btalent (?:community|network|pool))/i,
 ];
 
@@ -295,6 +298,13 @@ const WEAK_CONFIRMATION = [/\bthank(?:s| you) for (?:your )?interest in\b/i];
 const DOUBT = /\b(?:unfortunately|regret(?:tably)?|unsuccessful|not (?:been )?(?:selected|chosen)|rejected|someone else|position (?:has been )?filled)\b/i;
 // "Due to the volume of applications, we regret we can't reply to candidates individually": said of everyone.
 const VOLUME = /\b(?:volume|number) of (?:applications|applicants|candidates|interest|responses)\b|\bonly (?:shortlisted|selected|successful)\b|\b(?:individual|personal) (?:feedback|responses?)\b|\b(?:individually|personally)\b|\bwill be (?:contacted|notified)\b/i;
+// "Due to the volume of applications, only shortlisted candidates will be contacted / we can't give individual feedback":
+// said of everyone, not a selection already made ("the team has shortlisted candidates whose…") or the role closing.
+const disclaimer = (s: string) =>
+  VOLUME.test(s) &&
+  (GENERAL_PEOPLE.test(s) || /\bunsuccessful (?:candidates|applicants)\b/i.test(s) || (/\b(?:feedback|respond|reply)\b/i.test(s) && !/\b(?:closed|filled)\b/i.test(s))) &&
+  !YOU.test(s) &&
+  !CHOSEN.test(s);
 const STATUS_NO = /\b(?:status|updated to|changed to)\b[^.\n]{0,40}\b(?:rejected|not selected|declined|unsuccessful|position filled|no longer under consideration|not moving forward)\b/i;
 
 const UPDATE = [
@@ -364,7 +374,7 @@ export function classify(subject: string | null | undefined, body: string | null
   // A status changed to a decision is a rejection, but templates differ too much to close the application on it.
   if (STATUS_NO.test(text) && says(UPDATE, text)) return { kind: "rejection", confident: false };
   // What reads as a decision against you is never recorded on its own as a confirmation or update.
-  const template = systemSender(sender, subject ?? "") && quiet(text) && !rejected && !sentences(text).some((s) => !hypothetical(s) && DOUBT.test(s) && !(VOLUME.test(s) && !YOU.test(s)));
+  const template = systemSender(sender, subject ?? "") && quiet(text) && !rejected && !sentences(text).some((s) => !hypothetical(s) && DOUBT.test(s) && !disclaimer(s));
   if (says(CONFIRMATION, text)) return { kind: "confirmation", confident: template && !NOT_APPLIED.test(text) };
   if (anyIn(WEAK_CONFIRMATION, text)) return { kind: "confirmation", confident: false };
   if (says(UPDATE, text)) return { kind: "update", confident: template && !PORTAL.test(text) };
@@ -505,14 +515,14 @@ const titleWords = (t: string) => titleTokens(t).filter((w) => w !== "|" && w !=
 
 // Words that may stand right before or after a job title without making it a different one: "for the ___ role",
 // "Application: ___", "___ at Stripe". "Senior" before or "Sales" after it does ("Senior ___", "___ Sales").
-const TITLE_BEFORE = new Set(["the", "a", "an", "our", "your", "my", "this", "that", "for", "as", "to", "of", "in", "at", "on", "with", "about", "regarding", "re", "fwd", "fw", "position", "role", "job", "opening", "opportunity", "title", "application", "applying", "applied", "interview", "interviewing", "req", "requisition", "s", "is", "was", "new", "open", "into", "candidate", "candidacy", "from", "by", "update", "status", "offer", "assessment", "screen", "remote", "hybrid", "onsite", "contract", "time", "fulltime", "parttime"]);
+const TITLE_BEFORE = new Set(["the", "a", "an", "our", "your", "my", "this", "that", "for", "as", "to", "of", "in", "at", "on", "with", "about", "regarding", "re", "fwd", "fw", "position", "role", "job", "opening", "opportunity", "title", "application", "applying", "applied", "interview", "interviewing", "req", "requisition", "s", "is", "was", "new", "open", "into", "candidate", "candidacy", "from", "by", "update", "status", "offer", "assessment", "screen", "remote", "hybrid", "onsite", "contract", "time", "fulltime"]);
 const TITLE_AFTER = new Set(["role", "roles", "position", "positions", "job", "opening", "opportunity", "posting", "vacancy", "req", "requisition", "at", "with", "in", "for", "on", "and", "or", "has", "have", "was", "were", "is", "are", "will", "would", "we", "you", "your", "our", "the", "a", "an", "to", "from", "by", "which", "that", "this", "here", "there", "it", "if", "but", "so", "as", "i", "my", "me", "us", "please", "thank", "thanks", "application", "applied", "interview", "interviews", "candidacy", "hi", "hello", "dear", "remote", "hybrid", "onsite", "located", "based", "via", "posted", "id", "team", "reference", "ref"]);
 // A number counts only as a req number ("R12345", "25020804"), not a level ("___ 2").
 const boundary = (w: string | undefined, allowed: Set<string>) => w === undefined || w === "|" || allowed.has(w) || /\d{3,}|[a-z]\d|\d[a-z]/.test(w);
 // What may follow a title after a comma or dash without making it a longer one: a place or a kind of contract
 // ("___, Remote", "___ - San Francisco, CA"), the company, a req number, or subject words. "___, Payments" and
 // "___, Global Treasury" are other jobs.
-const PLACE = new Set(["remote", "hybrid", "onsite", "on", "in", "office", "us", "usa", "united", "new", "san", "los", "nyc", "sf", "la", "uk", "london", "seattle", "austin", "boston", "chicago", "denver", "atlanta", "toronto", "dallas", "miami", "washington", "dc", "ny", "ca", "tx", "wa", "ma", "il", "ga", "emea", "apac", "americas", "north", "south", "east", "west", "central", "bay", "global", "canada", "europe", "india", "multiple", "various", "nationwide", "virtual", "full", "part", "contract", "temporary", "permanent", "york", "jersey", "francisco", "jose", "diego", "angeles", "mateo", "area", "america", "states", "kingdom", "coast", "locations", "city", "metro", "hq", "fulltime", "parttime"]);
+const PLACE = new Set(["remote", "hybrid", "onsite", "on", "in", "office", "us", "usa", "united", "new", "san", "los", "nyc", "sf", "la", "uk", "london", "seattle", "austin", "boston", "chicago", "denver", "atlanta", "toronto", "dallas", "miami", "washington", "dc", "ny", "ca", "tx", "wa", "ma", "il", "ga", "emea", "apac", "americas", "north", "south", "east", "west", "central", "bay", "global", "canada", "europe", "india", "multiple", "various", "nationwide", "virtual", "full", "part", "contract", "temporary", "permanent", "york", "jersey", "francisco", "jose", "diego", "angeles", "mateo", "area", "america", "states", "kingdom", "coast", "locations", "city", "metro", "hq", "fulltime"]);
 // What a subject puts after "<title> - ": "Next Steps", "Phone Screen", "Application Received".
 const SUBJECT_TAIL = new Set(["next", "step", "steps", "update", "updates", "status", "offer", "assessment", "phone", "screen", "screening", "invitation", "invite", "confirmation", "received", "congratulations", "action", "required", "needed", "follow", "up", "reminder", "request", "schedule", "scheduling", "decision", "feedback", "availability"]);
 const US_STATE = new Set("al ak az ar ca co ct de fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok or pa ri sc sd tn tx ut vt va wa wv wi wy dc".split(" "));
@@ -606,7 +616,8 @@ const boardNames = (subject: string, c: Candidate) =>
   subject
     .split(/\b(?:sent to|to|at|from|by)\s+/i)
     .slice(1)
-    .some((after) => tenant(after.split(/\s+(?:for|[-–—|])\s|[:!?|(]/)[0].replace(/[^\p{L}\p{N}.&)]+$/u, "").trim(), c));
+    // The name alone, or all of the rest ("Hospital for Special Surgery", "Yahoo!").
+    .some((after) => [after.split(/\s+(?:for|[-–—|])\s|[:!?|(]/)[0], after].some((name) => tenant(name.replace(/[^\p{L}\p{N}.&)!]+$/u, "").trim(), c)));
 
 export function matchEmail(e: { sender: Sender; subject: string; body: string }, candidates: Candidate[]): Match & Seen {
   const subject = plain(e.subject);
@@ -692,7 +703,7 @@ export function isJobEmail(e: { sender: Sender; subject: string; body: string },
   // A person's comes ahead of the product and newsletter words, which a bank's signature or a background check also
   // has; the company's own mailings ("Capital One", "SoFi <info@…>") come after them.
   const asksLive = m.senderNamedLive && asks && (recruiter || m.titleNamed || JOB_WORDS.test(text));
-  if (asksLive && m.personLive) return true;
+  if (asksLive && (m.personLive || recruiter)) return true;
   if (!m.titleNamed && (PRODUCT.test(text) || NEWSLETTER.test(text))) return false;
   if ((recruiter || m.companyNamed) && appPhrase) return true;
   if (asksLive) return true;
