@@ -104,6 +104,9 @@ export const runs = sqliteTable("runs", {
   phase: text("phase").notNull().default("all"),
   // The phase the agent says it is in right now, for a run in progress.
   currentPhase: text("current_phase"),
+  // The agent's own one-line "what I'm doing now" (the item it's on and the step), and when it last said so.
+  note: text("note"),
+  noteAt: text("note_at"),
   trigger: text("trigger").notNull().default("schedule"),
   status: text("status", { enum: ["running", "ok", "failed"] }).notNull().default("running"),
   counts: text("counts", { mode: "json" }).$type<Record<string, number>>(),

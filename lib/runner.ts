@@ -33,7 +33,7 @@ export const PHASES = ["submit", "find", "prepare", "track"] as const;
  * run record, so a script that stops before then (the app not answering, a lock held, no token) reports why
  * instead of leaving the button looking like it did nothing.
  */
-export async function startAgentRun(phase: string, trigger: "manual" | "submit-now"): Promise<{ ok: true; runId: number } | { ok: false; error: string }> {
+export async function startAgentRun(phase: string, trigger: "manual" | "submit-now" | "resume"): Promise<{ ok: true; runId: number } | { ok: false; error: string }> {
   const running = activeRun();
   if (running) return { ok: false, error: `Run #${running.id} is still in progress.` };
   if (process.platform !== "darwin" && !process.env.JOBHUNT_ALLOW_NON_MAC) {

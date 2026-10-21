@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, or, lt } from "drizzle-orm";
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
 import { mailContext } from "@/lib/mail";
-import { OPEN_STAGES, autoAppliedToday, bySubmitOrder, byWatchlistThenScore, autoApplyCandidates, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
+import { OPEN_STAGES, autoAppliedToday, bySubmitOrder, byWatchlistThenScore, autoApplyCandidates, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
 
@@ -86,8 +86,26 @@ export const GET = agentRoute(async (req) => {
     .slice(0, 40)
     .map((a) => ({ company: a.job.companyName, title: a.job.title, location: a.job.location, reason: a.skipReason }));
 
+  const last = lastFinishedRun();
+
   return {
     today: new Date().toISOString().slice(0, 10),
+    // The previous run. When `unfinished` is true it stopped (from the app, at the time limit, or a crash) in
+    // `stopped_in` while on `note`; what it hadn't done is still listed in this context, so take that item first.
+    last_run: last
+      ? {
+          run_id: last.run.id,
+          status: last.run.status,
+          finished_at: last.run.finishedAt,
+          phases: last.run.phase,
+          stopped_in: last.run.currentPhase,
+          note: last.run.note,
+          note_at: last.run.noteAt,
+          errors: last.run.errors ?? [],
+          unfinished: last.unfinished,
+          phases_left: last.phasesLeft,
+        }
+      : null,
     criteria: {
       primary_locations: criteria.primaryLocations,
       secondary_locations: criteria.secondaryLocations,
