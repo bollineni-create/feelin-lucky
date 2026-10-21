@@ -9,7 +9,7 @@ A local app that tracks the search, and a daily Claude Code agent that finds job
 
 ## What it does
 
-- **A pipeline you can read at a glance.** The Pipeline board shows every application by stage, from found to offer, with a feed of what changed and a log of every agent run.
+- **A pipeline you can read at a glance.** The Pipeline board shows every application by stage, from found to offer, with a feed of what changed and a log of every agent run. While a run is on, the log says what the agent is doing right now (the application it's on and the step), and a run that stopped early, from Stop run, the time limit or a crash, can be finished with **Finish run**: the next run picks up the phase it was in and the item it was on.
 - **Today's matches, ready to review.** Each morning the Queue holds the jobs the agent found and scored, each with a tailored resume or CV, a cover letter and answers to the screening questions. Approve one and it goes out on the next run, or right away with **Apply to approved now**; skip one and tell the agent why.
 - **A company watchlist.** 134 companies come seeded, by category and priority. The agent scans the ones that are due on their careers sites first, then runs the broad searches, including LinkedIn.
 - **Fit scores, not noise.** Every job gets a fit score and reasons. Anything under the threshold (70, or 60 for high-priority companies) is closed on arrival and never scored again.
@@ -53,7 +53,7 @@ Open **Settings** and:
 
 | Screen | Path | For |
 | --- | --- | --- |
-| Pipeline | `/` | Every application by stage, the update feed and the run log. **Run now** starts a run. |
+| Pipeline | `/` | Every application by stage, the update feed and the run log. **Run scan now** starts a run; **Finish run** picks up one that stopped early. |
 | Today's matches | `/queue` | Approve or skip what the agent prepared. **Apply to approved now** sends the approved ones right away. |
 | Company watchlist | `/companies` | Companies by category, their careers sites and scan history, and the broad searches |
 | Application | `/jobs/[id]` | One job: fit, materials, the posting, tracking, its emails and status history |

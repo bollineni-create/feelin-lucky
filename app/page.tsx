@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { count, desc, eq, ne } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { activeRun, getCriteria, latestRuns, runActivity, listApplications, queueItems, sweepFollowUps, type AppWithJob } from "@/lib/logic";
+import { activeRun, getCriteria, latestRuns, resumePhases, runActivity, runUnfinished, listApplications, queueItems, sweepFollowUps, type AppWithJob } from "@/lib/logic";
 import { ago, fmtDate, fmtDateTime, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { LOG_TAIL_LINES, progressLine, runProgress } from "@/lib/run-progress";
 import { RunButton } from "@/components/RunButton";
 import { getMailSettings } from "@/lib/mail";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { runNow, stopRun, submitApprovedNow } from "./actions";
+import { resumeRun, runNow, stopRun, submitApprovedNow } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -87,6 +87,15 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   const companiesWatched = db.select({ n: count() }).from(schema.companies).where(ne(schema.companies.priority, "paused")).get()!.n;
   const running = activeRun();
   const runs = latestRuns(6);
+  // The last run stopped before the agent finished (from the app, at the time limit, or a crash): it can be
+  // picked up from the phase it was in, and the agent takes the item it was on first.
+  const unfinished = !running && runs[0] && runUnfinished(runs[0]) ? runs[0] : null;
+  const countsText = (c: Record<string, number> | null) =>
+    c
+      ? Object.entries(c)
+          .map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`)
+          .join(" · ")
+      : "";
 
   const mail = getMailSettings();
   const applied = all.filter((a) => a.stage === "applied");
@@ -135,6 +144,14 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
             <RunButton action={stopRun} label={`Stop run #${running.id}`} pendingLabel="Stopping…" doneMessage="Stopped." />
           ) : (
             <>
+              {unfinished ? (
+                <RunButton
+                  action={resumeRun}
+                  label={`Finish run #${unfinished.id} (${resumePhases(unfinished).join(", ")})`}
+                  pendingLabel="Starting…"
+                  doneMessage="Resuming. Watch Chrome; the run log below updates as it goes."
+                />
+              ) : null}
               {approved.length ? (
                 <RunButton action={submitApprovedNow} label={`Apply to ${approved.length} approved now`} pendingLabel="Starting…" doneMessage="Applying. Watch Chrome; the run log below updates as it goes." />
               ) : null}
@@ -258,80 +275,118 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
               </p>
             )}
           </div>
-          <div className="panel">
-            <h2>Run log</h2>
-            {runs.length === 0 ? (
-              <p className="small muted">No runs yet. Use Run scan now, or install the weekday schedule.</p>
-            ) : (
-              <table className="runs">
-                <thead>
-                  <tr>
-                    <th>Started</th>
-                    <th>Result</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.map((r, i) => {
-                    const isRunning = r.status === "running";
-                    // The live run, and the most recent finished one, show what their log and transcript say.
-                    const progress = isRunning || i === 0 ? runProgress(r) : null;
-                    const line = progress ? progressLine(progress, isRunning) : "";
-                    const activity = runActivity(r);
-                    // A site the agent couldn't scan is recorded on the company. If the agent also put it in
-                    // the run's errors, the company line below already says it, so that error isn't repeated.
-                    const unscanned = activity.companies_unscanned;
-                    const names = unscanned.map((name) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"));
-                    const errors = (r.errors ?? []).filter((e) => !names.some((re) => re.test(e)));
-                    return (
-                      <tr key={r.id}>
-                        <td className="mono">{fmtDateTime(r.startedAt)}</td>
-                        <td>
-                          <span className={`status-${r.status}`}>{r.status}</span> <span className="muted">· {r.phase}</span>
-                          {isRunning && r.currentPhase ? <span className="muted"> · in {r.currentPhase}</span> : null}
-                          {r.counts ? (
-                            <div className="muted">
-                              {Object.entries(r.counts)
-                                .map(([k, v]) => `${v} ${k}`)
-                                .join(" · ")}
-                            </div>
-                          ) : null}
-                          <div className="muted">{activityText(activity, r)}</div>
-                          {unscanned.length ? (
-                            <div className="muted">
-                              Couldn&apos;t scan {unscanned.join(", ")} · <Link href="/companies">see the watchlist</Link>
-                            </div>
-                          ) : null}
-                          {line ? (
-                            <div className={isRunning ? "status-running" : "muted"}>
-                              {isRunning ? "Now: " : "Agent: "}
-                              {line}
-                              {progress?.lastEventAt && isRunning ? ` (${ago(progress.lastEventAt)})` : ""}
-                            </div>
-                          ) : null}
-                          {errors.length ? (
-                            <ul className="run-errors">
-                              {errors.map((e, j) => (
-                                <li key={j} className="status-failed">
-                                  {e}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : null}
-                          {progress?.logLines.length ? (
-                            <details className="run-log">
-                              <summary className="small muted">Last {Math.min(progress.logLines.length, LOG_TAIL_LINES)} lines of the log</summary>
-                              <pre className="run-log-text">{progress.logLines.join("\n")}</pre>
-                            </details>
-                          ) : null}
+        </aside>
+      </section>
+
+      <section aria-labelledby="runs-h" className="panel">
+        <div className="page-head" style={{ alignItems: "center", gap: 12, marginBottom: 12 }}>
+          <h2 id="runs-h" className="section">
+            Run log
+          </h2>
+          {running ? (
+            <span className="small status-running">Run #{running.id} in progress · refreshes every 15s</span>
+          ) : unfinished ? (
+            <span className="small muted">
+              Run #{unfinished.id} stopped in {unfinished.currentPhase}
+              {unfinished.note ? ` while ${unfinished.note}` : ""}. Finish run picks up {resumePhases(unfinished).join(", ")} from there.
+            </span>
+          ) : null}
+        </div>
+        {runs.length === 0 ? (
+          <p className="small muted">No runs yet. Use Run scan now, or install the weekday schedule.</p>
+        ) : (
+          <div className="runs-wrap">
+            <table className="runs">
+              <thead>
+                <tr>
+                  <th>Started</th>
+                  <th>Result</th>
+                  <th>Phases</th>
+                  <th>Reported by the agent</th>
+                  <th>Recorded by the app</th>
+                  <th>Agent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((r, i) => {
+                  const isRunning = r.status === "running";
+                  // The live run, and the most recent finished one, show what their log and transcript say.
+                  const progress = isRunning || i === 0 ? runProgress(r) : null;
+                  const line = progress ? progressLine(progress, isRunning) : "";
+                  const activity = runActivity(r);
+                  // A site the agent couldn't scan is recorded on the company. If the agent also put it in
+                  // the run's errors, the company line below already says it, so that error isn't repeated.
+                  const unscanned = activity.companies_unscanned;
+                  const names = unscanned.map((name) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"));
+                  const errors = (r.errors ?? []).filter((e) => !names.some((re) => re.test(e)));
+                  // What the agent says it's on beats what the transcript suggests; the latter is the fallback.
+                  const showNote = r.note && (isRunning || runUnfinished(r));
+                  return [
+                    <tr key={r.id}>
+                      <td className="mono nowrap">
+                        {fmtDateTime(r.startedAt)}
+                        <div className="muted">{r.trigger.replace(/-/g, " ")}</div>
+                      </td>
+                      <td className="nowrap">
+                        <span className={`status-${r.status}`}>{r.status}</span>
+                      </td>
+                      <td>
+                        {r.phase.split(",").join(", ")}
+                        {isRunning && r.currentPhase ? <div className="status-running">in {r.currentPhase}</div> : null}
+                        {!isRunning && runUnfinished(r) ? <div className="muted">stopped in {r.currentPhase}</div> : null}
+                      </td>
+                      <td className="muted">{countsText(r.counts) || "—"}</td>
+                      <td className="muted">
+                        {activityText(activity, r)}
+                        {unscanned.length ? (
+                          <div>
+                            Couldn&apos;t scan {unscanned.join(", ")} · <Link href="/companies">see the watchlist</Link>
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="agent">
+                        {showNote ? (
+                          <div className={isRunning ? "status-running" : ""}>
+                            {isRunning ? "Now: " : "Was on: "}
+                            {r.note}
+                            {r.noteAt ? <span className="muted"> ({ago(r.noteAt)})</span> : null}
+                          </div>
+                        ) : null}
+                        {line ? (
+                          <div className={isRunning && !showNote ? "status-running" : "muted"}>
+                            {isRunning && !showNote ? "Now: " : ""}
+                            {line}
+                            {progress?.lastEventAt && isRunning ? ` (${ago(progress.lastEventAt)})` : ""}
+                          </div>
+                        ) : null}
+                        {errors.length ? (
+                          <ul className="run-errors">
+                            {errors.map((e, j) => (
+                              <li key={j} className="status-failed">
+                                {e}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {!showNote && !line && !errors.length ? <span className="muted">—</span> : null}
+                      </td>
+                    </tr>,
+                    progress?.logLines.length ? (
+                      <tr key={`${r.id}-log`} className="runs-detail">
+                        <td colSpan={6}>
+                          <details className="run-log">
+                            <summary className="small muted">Last {Math.min(progress.logLines.length, LOG_TAIL_LINES)} lines of the log</summary>
+                            <pre className="run-log-text">{progress.logLines.join("\n")}</pre>
+                          </details>
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
+                    ) : null,
+                  ];
+                })}
+              </tbody>
+            </table>
           </div>
-        </aside>
+        )}
       </section>
     </div>
   );

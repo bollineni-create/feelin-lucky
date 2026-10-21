@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db, schema } from "@/lib/db";
-import { changeStage, getApplication, getProfile, hasMaterials, iso, logEvent } from "@/lib/logic";
+import { changeStage, getApplication, getProfile, hasMaterials, iso, lastFinishedRun, logEvent } from "@/lib/logic";
 import { renderMaterials } from "@/lib/render";
 import { startAgentRun, stopAgentRun } from "@/lib/runner";
 import { checkMailBriefly, getMailSettings, reopenEmail, resolveEmail, updateMailSettings, type Resolution } from "@/lib/mail";
@@ -62,6 +62,15 @@ export async function stopRun() {
   const r = stopAgentRun();
   // Give the script a moment to close the run record before the page re-renders.
   await new Promise((done) => setTimeout(done, 1500));
+  refresh();
+  return r;
+}
+
+/** Starts a run over the phases the last run didn't get through; the agent takes the item it stopped on first. */
+export async function resumeRun() {
+  const last = lastFinishedRun();
+  if (!last?.unfinished) return { ok: false as const, error: "The last run finished on its own; nothing to resume. Use Run scan now." };
+  const r = await startAgentRun(last.phasesLeft.join(","), "resume");
   refresh();
   return r;
 }

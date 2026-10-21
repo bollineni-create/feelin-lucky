@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { and, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
 import { ROOT, db, schema } from "./db";
 import type { Application, Job, Stage } from "@/db/schema";
 
@@ -201,6 +201,36 @@ export function autoApplyCandidates(): AppWithJob[] {
 
 export function latestRuns(limit = 8) {
   return db.select().from(runs).orderBy(desc(runs.startedAt)).limit(limit).all();
+}
+
+type RunRow = typeof runs.$inferSelect;
+
+// How a run reads when something other than the agent closed it: the script's signal trap, its watchdog, its
+// exit check, or the app finding the script gone (closeDeadRuns below).
+const INTERRUPTED = /^(Stopped (before it finished|at the \d+-minute limit)|The agent exited .* without closing the run|The run stopped without closing)/;
+
+/**
+ * A run that stopped before the agent reached its end-of-run report: stopped from the app, by the time limit,
+ * by a crash or a restart, while it was in a phase. Its `note` says the item it was on; the next run can
+ * finish from that phase (see resumePhases).
+ */
+export function runUnfinished(run: Pick<RunRow, "status" | "currentPhase" | "errors">) {
+  return run.status === "failed" && !!run.currentPhase && (run.errors ?? []).some((e) => INTERRUPTED.test(e));
+}
+
+/** The phases left when a run stopped in `currentPhase`: that phase and the ones after it, in run order. */
+export function resumePhases(run: Pick<RunRow, "phase" | "currentPhase">): string[] {
+  const phases = run.phase.split(",").map((p) => p.trim()).filter(Boolean);
+  const at = run.currentPhase ? phases.indexOf(run.currentPhase) : -1;
+  return at >= 0 ? phases.slice(at) : phases;
+}
+
+/** The most recent run that is over, with what it left unfinished, for the agent's context and the Pipeline page. */
+export function lastFinishedRun() {
+  const run = db.select().from(runs).where(ne(runs.status, "running")).orderBy(desc(runs.id)).limit(1).get();
+  if (!run) return null;
+  const unfinished = runUnfinished(run);
+  return { run, unfinished, phasesLeft: unfinished ? resumePhases(run) : [] };
 }
 
 const RUN_LOCK = path.join(ROOT, "logs", ".run.lock");

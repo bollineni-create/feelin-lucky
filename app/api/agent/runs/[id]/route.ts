@@ -9,6 +9,8 @@ const Body = z.object({
   phase: z.string().optional(),
   counts: z.record(z.string(), z.number()).optional(),
   errors: z.array(z.string()).optional(),
+  // One line on what the agent is doing right now (the item and the step); shown live on the Pipeline page.
+  note: z.string().trim().max(240).optional(),
   finished: z.boolean().optional(),
 });
 
@@ -26,6 +28,7 @@ export const PATCH = agentRoute(async (req, params) => {
       currentPhase: b.phase ?? run.currentPhase,
       counts: b.counts ? { ...(run.counts ?? {}), ...b.counts } : run.counts,
       errors: b.errors ? [...(run.errors ?? []), ...b.errors] : run.errors,
+      ...(b.note != null ? { note: b.note || null, noteAt: iso() } : {}),
       finishedAt: done ? iso() : run.finishedAt,
     })
     .where(eq(schema.runs.id, id))

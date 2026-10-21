@@ -212,9 +212,14 @@ h2.section { font-size: 18px; font-weight: 600; }
 .feed .d { font-size: 13px; color: var(--ink-2); }
 .feed .w { font: 12px var(--mono); color: var(--ink-3); margin-top: 2px; }
 
-.runs { width: 100%; border-collapse: collapse; font-size: 13px; }
-.runs td, .runs th { text-align: left; padding: 8px 8px 8px 0; border-top: 1px solid var(--divider); vertical-align: top; }
-.runs th { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); border-top: 0; }
+.runs-wrap { overflow-x: auto; }
+.runs { width: 100%; min-width: 900px; border-collapse: collapse; font-size: 13px; }
+.runs td, .runs th { text-align: left; padding: 10px 16px 10px 0; border-top: 1px solid var(--divider); vertical-align: top; }
+.runs td:last-child, .runs th:last-child { padding-right: 0; }
+.runs th { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); border-top: 0; white-space: nowrap; }
+.runs .nowrap { white-space: nowrap; }
+.runs .agent { min-width: 260px; }
+.runs tr.runs-detail td { border-top: 0; padding-top: 0; }
 .status-ok { color: var(--accent-text); }
 .status-failed { color: var(--danger); }
 .status-running { color: var(--amber); }
