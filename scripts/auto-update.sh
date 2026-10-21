@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Keeps this copy on the latest commit of main. The com.jobhunt.update launch agent runs it every 15
-# minutes; it does nothing unless GitHub has a newer commit. On a new commit it downloads it, keeps your
+# Keeps this copy on the latest commit of main. The com.jobhunt.update launch agent runs it every minute, so
+# a commit on main is installed within a minute or two of landing; it does nothing unless GitHub has a newer commit. On a new commit it downloads it, keeps your
 # data (data/, logs/, .env, my-profile.json, PDFs), reinstalls dependencies, rebuilds and restarts the app, and
 # rebuilds Lodestar.app when its own files changed (an open Lodestar window reloads by itself). Lodestar also runs
 # this each time it opens, and from Lodestar → Check for Updates… (with --tell).
@@ -30,6 +30,24 @@ main() {
   tell() { [ "$TELL" = 1 ] && notify "$1"; return 0; }
   # Keeps Lodestar.app in /Applications built from this version (does nothing when it already is).
   refresh_app() { bash scripts/make-mac-app.sh --if-changed >>"$LOG" 2>&1 || log "Rebuilding Lodestar.app failed; run 'Install Job Hunt.command' again."; }
+  # Installs from before the every-minute check still have com.jobhunt.update on a 15-minute interval. Move it over
+  # once. Reloading that agent ends the job this script runs as (launchd stops the job's process group), so the reload
+  # runs from a new session, a few seconds after this script is done.
+  refresh_update_agent() {
+    local plist="$HOME/Library/LaunchAgents/com.jobhunt.update.plist"
+    [ -f "$plist" ] || return 0
+    [ "$(/usr/libexec/PlistBuddy -c "Print :StartInterval" "$plist" 2>/dev/null)" = "60" ] && return 0
+    log "Moving com.jobhunt.update to check GitHub every minute (was every 15)."
+    python3 - "$ROOT" <<'PY' 2>>"$LOG" || log "Couldn't reload com.jobhunt.update; run 'scripts/install-launchd.sh --update-only' or 'Install Job Hunt.command' again."
+import os, subprocess, sys
+root = sys.argv[1]
+if os.fork() == 0:
+    os.setsid()
+    log = open(os.path.join(root, "logs", "update.log"), "a")
+    subprocess.Popen(["/bin/bash", "-c", 'sleep 3; exec /bin/bash "$0/scripts/install-launchd.sh" --update-only', root], stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+    os._exit(0)
+PY
+  }
 
   [ "${JOBHUNT_AUTO_UPDATE:-1}" = "0" ] && { tell "Automatic updates are off (JOBHUNT_AUTO_UPDATE=0 in .env)."; exit 0; }
   # Don't restart the app under a running agent; the next check picks the update up.
@@ -54,12 +72,19 @@ main() {
     else touch "$RETRY"; log "Couldn't restart com.jobhunt.app; trying again on the next check. Or run 'Install Job Hunt.command' again."; fi
   fi
 
-  LATEST="$(curl -fsSL -H "Accept: application/vnd.github.sha" "https://api.github.com/repos/$REPO/commits/$BRANCH" 2>/dev/null)"
+  # Ask git for the branch head rather than the GitHub API: the API allows 60 unauthenticated calls an hour, and this
+  # runs every minute. The API is the fallback for a Mac without git.
+  if command -v git >/dev/null 2>&1; then
+    LATEST="$(git ls-remote -q "https://github.com/$REPO.git" "refs/heads/$BRANCH" 2>/dev/null | cut -f1)"
+  else
+    LATEST="$(curl -fsSL -H "Accept: application/vnd.github.sha" "https://api.github.com/repos/$REPO/commits/$BRANCH" 2>/dev/null)"
+  fi
   # Offline or rate-limited; try again next time.
   [[ "$LATEST" =~ ^[0-9a-f]{40}$ ]] || { tell "Couldn't reach GitHub to check for updates. Try again later."; exit 0; }
   CURRENT="$(cat "$SHA_FILE" 2>/dev/null || true)"
   if [ "$LATEST" = "$CURRENT" ] && [ "$FORCE" = 0 ]; then
     refresh_app   # e.g. the first check after an update that came from an older copy of this script
+    refresh_update_agent
     tell "Lodestar is up to date (${CURRENT:0:7})."
     exit 0
   fi
@@ -91,6 +116,7 @@ main() {
   refresh_app
   log "Updated to ${LATEST:0:7}."
   notify "Updated to the latest version."
+  refresh_update_agent
 }
 
 main "$@"

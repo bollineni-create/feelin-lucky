@@ -2,10 +2,11 @@
 # Installs three launch agents:
 #   com.jobhunt.app     keeps the app running on 127.0.0.1:3000
 #   com.jobhunt.daily   runs scripts/daily-run.sh at 7:00 AM, Monday–Friday
-#   com.jobhunt.update  runs scripts/auto-update.sh every 15 minutes (installs new commits on main)
+#   com.jobhunt.update  runs scripts/auto-update.sh every minute (installs new commits on main as they land)
 # launchd uses the Mac's local time zone; keep the Mac on Pacific time for 7:00 AM PT.
 #   scripts/install-launchd.sh            install / reinstall
 #   scripts/install-launchd.sh --app-only rewrite and restart com.jobhunt.app alone (auto-update.sh uses it)
+#   scripts/install-launchd.sh --update-only rewrite and reload com.jobhunt.update alone (auto-update.sh uses it)
 #   scripts/install-launchd.sh --remove   uninstall
 set -euo pipefail
 
@@ -107,6 +108,7 @@ $DAYS  </array>
 </plist>
 PLIST
 
+write_update_plist() {
 cat > "$UPDATE_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -119,17 +121,27 @@ cat > "$UPDATE_PLIST" <<PLIST
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>$NODE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>RunAtLoad</key><true/>
-  <key>StartInterval</key><integer>900</integer>
+  <key>StartInterval</key><integer>60</integer>
+  <key>AbandonProcessGroup</key><true/>
   <key>StandardOutPath</key><string>$ROOT/logs/launchd-update.log</string>
   <key>StandardErrorPath</key><string>$ROOT/logs/launchd-update.log</string>
 </dict>
 </plist>
 PLIST
+}
+
+if [ "${1:-}" = "--update-only" ]; then
+  write_update_plist
+  unload "$UPDATE_PLIST"
+  load "$UPDATE_PLIST"
+  echo "Reinstalled com.jobhunt.update (checks GitHub every minute)."; exit 0
+fi
+write_update_plist
 
 for p in "$APP_PLIST" "$DAILY_PLIST" "$UPDATE_PLIST"; do
   unload "$p"
   load "$p"
 done
-echo "Installed. App: http://127.0.0.1:3000 · daily run: weekdays 7:00 AM ($TZ_NAME) · updates from GitHub: checked every 15 minutes."
+echo "Installed. App: http://127.0.0.1:3000 · daily run: weekdays 7:00 AM ($TZ_NAME) · updates from GitHub: checked every minute, installed as they land."
 [ "$TZ_NAME" = "America/Los_Angeles" ] || echo "Note: this Mac isn't on Pacific time, so 7:00 AM is local time."
 echo "Logs: $ROOT/logs/"

@@ -5,7 +5,7 @@ import WebKit
 // The server normally runs all the time (launch agent com.jobhunt.app). If it isn't answering, the app
 // starts it, shows a short "Starting" page, and loads the app as soon as it responds.
 // Like Palimpsest it keeps itself up to date: opening it runs scripts/auto-update.sh in the background (so does the
-// com.jobhunt.update launch agent, every 15 minutes), and when an update lands the window reloads on the new version.
+// com.jobhunt.update launch agent, every minute), and when an update lands the window reloads on the new version.
 // The project folder is stored in Info.plist (JobHuntFolder) by scripts/make-mac-app.sh.
 
 let appURL = URL(string: "http://127.0.0.1:3000")!

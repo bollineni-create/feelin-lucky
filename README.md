@@ -65,11 +65,11 @@ Open **Settings** and:
 
 **Lodestar.app** opens Lodestar in its own window with its own menus, the same way Palimpsest works, starting the server first if it isn't running. **View** has Pipeline, Queue, Companies, Settings and Mail as ⌘1–⌘5. Job postings and your resume files open in your normal browser. The window needs Apple's command line tools; if they're missing, run `xcode-select --install` and then the installer again (until then, Lodestar opens in your browser).
 
-**Updates install themselves.** Lodestar checks GitHub each time you open it and every 15 minutes in the background. When `main` has a new commit it downloads it, rebuilds and restarts the app, and you get a notification. An open window reloads on the new version by itself, and if the update changes Lodestar.app itself, the app is rebuilt in place and reopened.
+**Updates install themselves.** Lodestar checks GitHub each time you open it and every minute in the background, so a commit on `main` (a merged pull request from Claude, say) is installed within a minute or two of landing: it downloads it, rebuilds and restarts the app, and you get a notification. An open window reloads on the new version by itself, and if the update changes Lodestar.app itself, the app is rebuilt in place and reopened.
 
 - **Lodestar → Check for Updates…** checks right away and tells you either way.
 - **About Lodestar** shows the installed commit.
-- Updates never touch your data, `.env`, `my-profile.json` or PDFs, and they wait while an agent run is going.
+- Updates never touch your data, `.env`, `my-profile.json` or PDFs, and they wait while an agent run is going. The check is a `git ls-remote` against GitHub, not an API call, so checking every minute stays within GitHub's limits.
 - The log is `logs/update.log`. Set `JOBHUNT_AUTO_UPDATE=0` in `.env` to turn updates off.
 
 Copies from earlier installs in `~/Applications` move to `/Applications` on their own, Dock icon included.
@@ -161,7 +161,7 @@ The Lodestar mailbox is created inside each Mail account (not "On My Mac"), so i
 
 **If it says Lodestar isn't allowed to use Mail.** Open System Settings → Privacy & Security → Automation, find **node**, and turn on **Mail** under it. If node isn't listed, click **Check mail now** on the Mail page while you're at the Mac and answer the prompt. If there's still no prompt, the server isn't running as node yet: run **Install Job Hunt.command** again (or `scripts/install-launchd.sh --app-only`). A server you started yourself in Terminal is listed under **Terminal** instead. To ask again from scratch, run `tccutil reset AppleEvents` in Terminal (it resets every app's Automation choices, not just Lodestar's) and click **Check mail now**.
 
-- macOS only asks on behalf of a real program, so the always-on server now runs as `node` itself rather than through `npm start`. Installs from before this change are moved over by the updater on its next check (within 15 minutes, and not during a run); running **Install Job Hunt.command** again does the same.
+- macOS only asks on behalf of a real program, so the always-on server now runs as `node` itself rather than through `npm start`. Installs from before this change are moved over by the updater on its next check (not during a run); running **Install Job Hunt.command** again does the same.
 - Permission belongs to that `node`. After Homebrew upgrades Node (`brew upgrade node`), macOS asks once more. The copy of Node the installer downloads into the Lodestar folder keeps it.
 - Notifications come from **Script Editor** as far as macOS is concerned. If none appear, allow Script Editor under System Settings → Notifications. They're a convenience: the Mail page and the Pipeline always have the full picture.
 - On a very large inbox (tens of thousands of messages), Mail can pause for a moment while Lodestar checks it.
