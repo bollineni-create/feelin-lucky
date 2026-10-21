@@ -43,6 +43,13 @@
       "when": 1792553455660,
       "tag": "0005_run_note",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792568044753,
+      "tag": "0006_lookups",
+      "breakpoints": true
     }
   ]
 }

@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { count, desc, eq, ne } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { activeRun, getCriteria, latestRuns, resumePhases, runActivity, runUnfinished, listApplications, queueItems, sweepFollowUps, type AppWithJob } from "@/lib/logic";
+import { activeRun, doneLookups, getCriteria, latestRuns, lookupLabel, pendingLookups, resumePhases, runActivity, runUnfinished, listApplications, queueItems, sweepFollowUps, type AppWithJob } from "@/lib/logic";
 import { ago, fmtDate, fmtDateTime, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { LOG_TAIL_LINES, progressLine, runProgress } from "@/lib/run-progress";
 import { RunButton } from "@/components/RunButton";
 import { getMailSettings } from "@/lib/mail";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { resumeRun, runNow, stopRun, submitApprovedNow } from "./actions";
+import { addLookup, redoLookup, removeLookup, resumeRun, runNow, stopRun, submitApprovedNow } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +55,8 @@ function activityText(a: ReturnType<typeof runActivity>, r: { status: string; ph
   }
   const jobs = a.jobs_found ? `${a.jobs_found} new jobs (${a.jobs_found_careers} careers, ${a.jobs_found_linkedin} LinkedIn)` : "no new jobs";
   const lowFit = a.jobs_closed_low_fit ? ` · ${a.jobs_closed_low_fit} closed as low fit` : "";
-  return `Recorded: ${a.companies_scanned} companies scanned · ${jobs}${lowFit}`;
+  const lookups = a.lookups_done ? ` · ${a.lookups_done} ${a.lookups_done === 1 ? "lookup" : "lookups"} done` : "";
+  return `Recorded: ${a.companies_scanned} companies scanned${lookups} · ${jobs}${lowFit}`;
 }
 
 function whenLabel(iso: string) {
@@ -74,8 +75,8 @@ function locationsLine(c: ReturnType<typeof getCriteria>) {
   return [first && `${first} first`, also && `${also} open`, remote].filter(Boolean).join(" · ");
 }
 
-export default async function PipelinePage({ searchParams }: { searchParams: Promise<{ source?: string }> }) {
-  const { source } = await searchParams;
+export default async function PipelinePage({ searchParams }: { searchParams: Promise<{ source?: string; lookup?: string }> }) {
+  const { source, lookup: lookupError } = await searchParams;
   const filter = source === "careers" || source === "linkedin" ? source : null;
 
   sweepFollowUps();
@@ -98,6 +99,8 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
       : "";
 
   const mail = getMailSettings();
+  const lookupsPending = pendingLookups();
+  const lookupsDone = doneLookups(6);
   const applied = all.filter((a) => a.stage === "applied");
   const confirmed = applied.filter((a) => a.emailConfirmedAt).length;
   const followUp = applied.some((a) => a.nextAction === "Follow up");
@@ -180,6 +183,107 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
             </div>
           );
         })}
+      </section>
+
+      <section aria-labelledby="lookups-h" className="panel" id="lookups">
+        <div className="page-head" style={{ alignItems: "center", gap: 12, marginBottom: 12 }}>
+          <h2 id="lookups-h" className="section">
+            Look for something on the next scan
+          </h2>
+          <span className="small muted">
+            {lookupsPending.length
+              ? `${lookupsPending.length} waiting · the agent takes ${lookupsPending.length === 1 ? "it" : "them"} before the watchlist`
+              : "A job title, a company, or both. The agent searches for it first, before the watchlist."}
+          </span>
+        </div>
+        <form action={addLookup} className="addform lookup-form">
+          <div className="field">
+            <label htmlFor="lk-title">Job title</label>
+            <input className="input" id="lk-title" name="title" placeholder="Head of Treasury" maxLength={120} />
+          </div>
+          <div className="field">
+            <label htmlFor="lk-company">Company</label>
+            <input className="input" id="lk-company" name="company" placeholder="Brex (optional if a title is given)" maxLength={120} />
+          </div>
+          <div className="field" style={{ flexBasis: 320, flexGrow: 2 }}>
+            <label htmlFor="lk-note">Anything else (optional)</label>
+            <input className="input" id="lk-note" name="note" placeholder="A link to the posting, a team, who mentioned it…" maxLength={500} />
+          </div>
+          <button className="btn btn-primary" type="submit">
+            Add to next scan
+          </button>
+          {lookupError === "empty" ? (
+            <p className="small status-failed" role="alert" style={{ flexBasis: "100%", margin: 0 }}>
+              Give a job title or a company, or both.
+            </p>
+          ) : null}
+        </form>
+        {lookupsPending.length || lookupsDone.length ? (
+          <div className="lookups">
+            {lookupsPending.length ? (
+              <div>
+                <div className="label-caps">Waiting for the next scan</div>
+                <ul className="feed">
+                  {lookupsPending.map((l) => (
+                    <li key={l.id}>
+                      <span className="mark" aria-hidden />
+                      <div className="lookup-row">
+                        <div>
+                          <div className="t">{lookupLabel(l)}</div>
+                          <div className="d">
+                            {l.note ? `${l.note} · ` : ""}added {ago(l.createdAt)}
+                            {l.company && !l.companyId ? " · not on the watchlist; the agent finds its careers page" : ""}
+                          </div>
+                        </div>
+                        <form action={removeLookup.bind(null, l.id)}>
+                          <button className="btn btn-ghost btn-sm" type="submit">
+                            Remove
+                          </button>
+                        </form>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {lookupsDone.length ? (
+              <div>
+                <div className="label-caps">Looked for</div>
+                <ul className="feed">
+                  {lookupsDone.map((l) => (
+                    <li key={l.id}>
+                      <span className={`mark ${l.jobs.length ? "status_change" : ""}`} aria-hidden />
+                      <div className="lookup-row">
+                        <div>
+                          <div className="t">{lookupLabel(l)}</div>
+                          <div className="d">
+                            {l.result} · {ago(l.doneAt)}
+                            {l.runId ? ` · run #${l.runId}` : ""}
+                          </div>
+                          {l.jobs.length ? (
+                            <div className="d lookup-jobs">
+                              {l.jobs.map((a) => (
+                                <Link key={a.id} href={`/jobs/${a.jobId}`}>
+                                  {a.job.title} · {a.job.companyName}
+                                  {a.job.fitScore != null ? ` · fit ${a.job.fitScore}` : ""}
+                                </Link>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                        <form action={redoLookup.bind(null, l.id)}>
+                          <button className="btn btn-ghost btn-sm" type="submit">
+                            Look again
+                          </button>
+                        </form>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section aria-labelledby="board-h" style={{ display: "flex", flexDirection: "column", gap: 12 }}>

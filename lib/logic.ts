@@ -5,7 +5,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, sql } from "drizzle-
 import { ROOT, db, schema } from "./db";
 import type { Application, Job, Stage } from "@/db/schema";
 
-const { applications, jobs, events, companies, searchCriteria, profile, runs } = schema;
+const { applications, jobs, events, companies, searchCriteria, profile, runs, lookups } = schema;
 
 export const FOLLOW_UP_DAYS = 14;
 export const OPEN_STAGES: Stage[] = ["applied", "screening", "interviewing", "offer"];
@@ -324,12 +324,43 @@ export function runActivity(run: Pick<typeof runs.$inferSelect, "startedAt" | "f
     .orderBy(companies.name)
     .all()
     .map((c) => c.name);
+  // Lookups (a title or company the user asked for) the agent settled during this run.
+  const lookupsDone = db
+    .select({ n: sql<number>`count(*)` })
+    .from(lookups)
+    .where(and(eq(lookups.status, "done"), sql`${lookups.doneAt} >= ${from}`, sql`${lookups.doneAt} <= ${to}`))
+    .get()!.n;
   return {
     companies_scanned: scanned,
     companies_unscanned: unscanned,
+    lookups_done: lookupsDone,
     jobs_found: found.reduce((s, r) => s + r.n, 0),
     jobs_found_careers: bySource.careers ?? 0,
     jobs_found_linkedin: bySource.linkedin ?? 0,
     jobs_closed_low_fit: lowFit,
   };
+}
+
+// ---------- Lookups: what the user asked the agent to look for next scan ----------
+
+/** One line naming a lookup: "Head of Treasury at Brex", "Head of Treasury", "Brex". */
+export function lookupLabel(l: Pick<schema.Lookup, "title" | "company">) {
+  return l.title && l.company ? `${l.title} at ${l.company}` : (l.title ?? l.company ?? "");
+}
+
+/** Lookups still waiting for a scan, oldest first (the agent takes them in this order). */
+export function pendingLookups() {
+  return db.select().from(lookups).where(eq(lookups.status, "pending")).orderBy(lookups.createdAt, lookups.id).all();
+}
+
+/** Lookups the agent has settled, newest first, each with the jobs it posted for it. */
+export function doneLookups(limit = 8) {
+  const rows = db.select().from(lookups).where(eq(lookups.status, "done")).orderBy(desc(lookups.doneAt), desc(lookups.id)).limit(limit).all();
+  return rows.map((l) => ({ ...l, jobs: listApplications(eq(jobs.lookupId, l.id)) }));
+}
+
+/** The watchlist company a lookup's company names, matched on the name, so the agent gets its careers page. */
+export function matchCompany(name: string | null | undefined) {
+  if (!name) return undefined;
+  return db.select().from(companies).where(sql`lower(${companies.name}) = lower(${name.trim()})`).get();
 }

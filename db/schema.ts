@@ -53,10 +53,41 @@ export const jobs = sqliteTable(
     description: text("description"),
     fitScore: integer("fit_score"),
     fitReasons: text("fit_reasons", { mode: "json" }).$type<string[]>(),
+    // The lookup (a title or company the user asked the agent to look for) this job was found for, if any.
+    lookupId: integer("lookup_id").references(() => lookups.id),
     firstSeenAt: text("first_seen_at").notNull().$defaultFn(now),
     dedupeKey: text("dedupe_key").notNull(),
   },
   (t) => [uniqueIndex("jobs_dedupe_idx").on(t.dedupeKey)],
+);
+
+export const LOOKUP_STATUSES = ["pending", "done"] as const;
+export type LookupStatus = (typeof LOOKUP_STATUSES)[number];
+
+/**
+ * Something the user asked the agent to look for on its next scan: a job title, a company, or both ("Head of
+ * Treasury at Brex"). The agent takes these before the watchlist in the find phase, posts what it finds with the
+ * lookup's id, and marks the lookup done with a line on what it found. Jobs found this way are kept whatever
+ * they score, so the user gets to decide.
+ */
+export const lookups = sqliteTable(
+  "lookups",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    title: text("title"),
+    company: text("company"),
+    // The watchlist company it matches by name, if any, so the agent gets its careers page.
+    companyId: integer("company_id").references(() => companies.id),
+    // Anything else the user wants the agent to know: a URL, "the role Sam mentioned", a team name.
+    note: text("note"),
+    status: text("status", { enum: LOOKUP_STATUSES }).notNull().default("pending"),
+    createdAt: text("created_at").notNull().$defaultFn(now),
+    doneAt: text("done_at"),
+    runId: integer("run_id").references(() => runs.id),
+    // The agent's one line on what it found (or didn't).
+    result: text("result"),
+  },
+  (t) => [index("lookups_status_idx").on(t.status)],
 );
 
 export const applications = sqliteTable(
@@ -272,4 +303,5 @@ export type Event = typeof events.$inferSelect;
 export type SearchCriteria = typeof searchCriteria.$inferSelect;
 export type Profile = typeof profile.$inferSelect;
 export type Email = typeof emails.$inferSelect;
+export type Lookup = typeof lookups.$inferSelect;
 export type MailSettings = typeof mailSettings.$inferSelect;

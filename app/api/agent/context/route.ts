@@ -1,13 +1,13 @@
 import path from "node:path";
-import { and, asc, eq, inArray, isNotNull, isNull, or, lt } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, or, lt, sql } from "drizzle-orm";
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
 import { mailContext } from "@/lib/mail";
-import { OPEN_STAGES, autoAppliedToday, bySubmitOrder, byWatchlistThenScore, autoApplyCandidates, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
+import { OPEN_STAGES, pendingLookups, autoAppliedToday, bySubmitOrder, byWatchlistThenScore, autoApplyCandidates, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
 
-const { companies, applications } = schema;
+const { companies, applications, jobs } = schema;
 
 export const GET = agentRoute(async (req) => {
   const url = new URL(req.url);
@@ -80,7 +80,26 @@ export const GET = agentRoute(async (req) => {
   const found = listApplications(eq(applications.stage, "found")).sort(byWatchlistThenScore);
   const watchlist = (a: AppWithJob) => ["high", "watchlist", "off_watchlist"][watchTier(a)];
   const needsScore = found.filter((a) => a.job.fitScore == null);
-  const needsMaterials = found.filter((a) => a.job.fitScore != null && !hasMaterials(a) && a.job.fitScore >= thresholdFor(a.job.companyId));
+  // A job found for a lookup (the user asked for it) gets materials whatever it scored; the user decides in the Queue.
+  const needsMaterials = found.filter((a) => a.job.fitScore != null && !hasMaterials(a) && (a.job.lookupId != null || a.job.fitScore >= thresholdFor(a.job.companyId)));
+
+  // What the user asked the agent to look for on this scan: a title, a company, or both. Taken before the watchlist.
+  const lookupsOut = pendingLookups().map((l) => {
+    const co = l.companyId ? db.select().from(companies).where(eq(companies.id, l.companyId)).get() : undefined;
+    const already = db.select({ n: sql<number>`count(*)` }).from(jobs).where(eq(jobs.lookupId, l.id)).get()!.n;
+    return {
+      lookup_id: l.id,
+      title: l.title,
+      company: l.company,
+      company_id: co?.id ?? null,
+      careers_url: co?.careersUrl ?? null,
+      ats_type: co?.atsType ?? null,
+      note: l.note,
+      added_at: l.createdAt,
+      // Jobs an earlier (stopped) run already posted for it.
+      jobs_posted_so_far: already,
+    };
+  });
 
   const skipFeedback = listApplications(and(eq(applications.stage, "closed"), eq(applications.closedReason, "skipped"), isNotNull(applications.skipReason)))
     .slice(0, 40)
@@ -138,6 +157,9 @@ export const GET = agentRoute(async (req) => {
       document_rule:
         "Resume for corporate, finance, tech and fintech roles. CV for think tanks, universities, international organizations (OECD, World Bank, IMF, UN) and health or research roles.",
     },
+    // Phase B starts here: for each, search the company's careers site (careers_url when it's on the watchlist) and
+    // LinkedIn for the title, post what you find with `lookup_id`, then PATCH /api/agent/lookups/:id done.
+    lookups: lookupsOut,
     companies_due: companiesToScan.map((c) => ({
       company_id: c.id,
       name: c.name,
@@ -174,7 +196,7 @@ export const GET = agentRoute(async (req) => {
         ? "Profile is not confirmed in Settings. Do not fill or submit any application; report this in the run errors."
         : null,
     open_applications: open,
-    jobs_needing_score: needsScore.map((a) => ({ job_id: a.jobId, application_id: a.id, company: a.job.companyName, watchlist: watchlist(a), title: a.job.title, url: a.job.url, location: a.job.location })),
+    jobs_needing_score: needsScore.map((a) => ({ job_id: a.jobId, application_id: a.id, company: a.job.companyName, watchlist: watchlist(a), title: a.job.title, url: a.job.url, location: a.job.location, lookup_id: a.job.lookupId })),
     jobs_needing_materials: needsMaterials.map((a) => ({
       job_id: a.jobId,
       application_id: a.id,
@@ -184,6 +206,7 @@ export const GET = agentRoute(async (req) => {
       url: a.job.url,
       fit_score: a.job.fitScore,
       fit_reasons: a.job.fitReasons,
+      lookup_id: a.job.lookupId,
     })),
     skip_feedback: skipFeedback,
     // Email tracking (Apple Mail): emails the app couldn't place or wasn't sure of wait in to_review for Phase D (track).
