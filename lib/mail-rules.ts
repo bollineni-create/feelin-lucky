@@ -97,7 +97,7 @@ const REJECTION = [
   /\bno longer accepting applications\b/i,
   /\bapplication_rejected\b/i,
   /\bunfortunately,? .{0,60}\bhas moved (?:on|to the next step)/i,
-  /\b(?:won't|will not|wouldn't|would not|can't|cannot|are unable to|unable to|not able to) (?:be )?(?:mov(?:e|ing) forward|proceed(?:ing)?|advanc(?:e|ing)|offer(?:ing)? you|progress(?:ing)?|pursu(?:e|ing) your)/i,
+  /\b(?:won't|will not|wouldn't|would not|can't|cannot|are unable to|unable to|not able to) (?:be )?(?:mov(?:e|ing) forward|proceed(?:ing)?(?: further)? with (?:your|the) (?:application|candidacy)|advanc(?:e|ing) (?:you|your)|offer(?:ing)? you (?:the|this|a|an) (?:position|role|job)|progress(?:ing)? (?:with )?your (?:application|candidacy)|pursu(?:e|ing) your)/i,
   /\bdecided (?:not to (?:move|proceed|pursue|advance|progress)|to (?:move|proceed|go) (?:forward )?with (?:other|another|a different)|to pursue (?:other|another))/i,
   /\bpursue other candidates\b/i,
   /\b(?:move|moving|proceed|proceeding|go|going) forward with (?:other|another) (?:candidates?|applicants?)\b/i,
@@ -105,7 +105,6 @@ const REJECTION = [
   /\b(?:have|has|had|were|was) not been selected\b|\b(?:were|was) not selected\b/i,
   /\b(?:position|role|job|opening|requisition) (?:has|have) (?:now )?been (?:filled|closed|cancel+ed)\b/i,
   /\bno longer (?:be )?(?:considering|under consideration|being considered|in consideration)\b/i,
-  /\bregret to inform\b/i,
   /\b(?:application|candidacy) (?:was|has been|is) (?:declined|rejected|unsuccessful)\b|\bwere unsuccessful\b/i,
   /\bdecline your application\b/i,
   /\b(?:go|going) (?:in|with) a different direction\b/i,
@@ -120,7 +119,7 @@ const OFFER = [
 ];
 
 const ASSESSMENT = [
-  /\bassessment\b/i,
+  /\b(?:online|technical|skills?|coding|cognitive|personality|video|pre-employment) assessment\b|\bassessment (?:link|invitation|invite)\b|\bcomplete (?:the|this|your|an?) (?:\w+ )?assessment\b/i,
   /\bcoding (?:challenge|exercise|test)\b/i,
   /\btake[- ]home\b/i,
   /\b(?:hackerrank|codesignal|codility|hirevue|karat|vidcruiter)\b/i,
@@ -192,10 +191,16 @@ export type Classification = { kind: EmailKind; confident: boolean };
  */
 export function classify(subject: string | null | undefined, body: string | null | undefined, sender?: Sender): Classification {
   const text = `${plain(subject)}\n${plain(body)}`;
-  if (says(REJECTION, text, false)) return { kind: "rejection", confident: true };
-  if (says(OFFER, text)) return { kind: "offer", confident: false };
-  if (ASSESSMENT_DOMAINS.some((d) => domainIs(sender?.domain ?? null, d)) || says(ASSESSMENT, text)) return { kind: "assessment", confident: false };
-  if (says(INTERVIEW, text)) return { kind: "interview", confident: false };
+  const offer = says(OFFER, text);
+  const assessment = ASSESSMENT_DOMAINS.some((d) => domainIs(sender?.domain ?? null, d)) || says(ASSESSMENT, text);
+  const interview = says(INTERVIEW, text);
+  // A rejection that asks for nothing is certain. One that also asks to talk, test or sign is a reschedule or offer
+  // paperwork ("unable to proceed with Tuesday's interview; could you share your availability?"), never recorded
+  // as a rejection on its own.
+  if (says(REJECTION, text, false) && !offer && !assessment && !interview) return { kind: "rejection", confident: true };
+  if (offer) return { kind: "offer", confident: false };
+  if (assessment) return { kind: "assessment", confident: false };
+  if (interview) return { kind: "interview", confident: false };
   const asks = says(ASKS, text);
   if (anyIn(CONFIRMATION, text)) return { kind: "confirmation", confident: !asks };
   if (anyIn(WEAK_CONFIRMATION, text)) return { kind: "confirmation", confident: false };
@@ -203,10 +208,18 @@ export function classify(subject: string | null | undefined, body: string | null
   return { kind: "other", confident: false };
 }
 
+/** The email asks to talk, to take a test or to sign: worth keeping even when it doesn't say "application". */
+export function asksSomething(subject: string | null | undefined, body: string | null | undefined) {
+  const text = `${plain(subject)}\n${plain(body)}`;
+  return says(INTERVIEW, text) || says(ASSESSMENT, text) || says(OFFER, text);
+}
+
 // ---------- Which application ----------
 
 export type Candidate = { id: number; stage: Stage; company: string; title: string; domains: string[] };
 export type Match = { applicationId: number | null; matchedBy: "title" | "company" | null; candidateIds: number[] };
+/** What matchEmail saw on the way: the company named anywhere, by the sender or subject, and a job title named. */
+export type Seen = { companyNamed: boolean; senderNamed: boolean; titleNamed: boolean };
 
 /** Stages where an application is in flight: a company-only match must be the one application here. */
 export const LIVE_STAGES: Stage[] = ["approved", "applied", "screening", "interviewing", "offer"];
@@ -289,29 +302,35 @@ function titleHit(title: string, subject: string, body: string): "exact" | "word
   const near = normTitle(`${subject} ${body.slice(0, 2500)}`);
   const t = normTitle(title);
   if (t.trim().length >= 4 && (near.includes(t) || normTitle(body).includes(t))) return "exact";
+  // Two words ("Product Manager") show up in too many emails to count without the title as written.
   const words = titleWords(title);
-  if (words.length < 2) return null;
+  if (words.length < 3) return null;
   const have = new Set(near.trim().split(" "));
   return words.filter((w) => have.has(w)).length / words.length >= 0.8 ? "words" : null;
 }
 
 /**
- * Which application an email is about. A clear title match wins; failing that, an email from (or naming in its
- * subject) a company with exactly one application in flight is that one. Anything else is left for the agent or
- * you, with the applications it could be about.
+ * Which application an email is about. The company has to be named by the sender or in the subject (a company named
+ * only in the body is someone else's email mentioning it). Then a clear title match wins; failing that, an email
+ * from a company with exactly one application in flight is probably that one (matchedBy "company", which the app
+ * only suggests). Anything else is left for the agent or you, with the applications it could be about.
  */
-export function matchEmail(e: { sender: Sender; subject: string; body: string }, candidates: Candidate[]): Match & { companyNamed: boolean; titleNamed: boolean } {
+export function matchEmail(e: { sender: Sender; subject: string; body: string }, candidates: Candidate[]): Match & Seen {
   const subject = plain(e.subject);
   const body = plain(e.body);
   const hits = candidates.map((c) => ({ c, co: companyHit(c, e.sender, subject, body) })).filter((h) => h.co);
-  const titled = hits.map((h) => ({ ...h, t: titleHit(h.c.title, subject, body) })).filter((h) => h.t);
+  const titledAll = hits.map((h) => ({ ...h, t: titleHit(h.c.title, subject, body) })).filter((h) => h.t);
+  const titled = titledAll.filter((h) => h.co === "sender");
   const live = (h: { c: Candidate }) => LIVE_STAGES.includes(h.c.stage);
+  // Suggestions: named by the sender before named only in the body, in flight before found, titled first.
+  const ranked = [...new Set([...titledAll, ...hits].sort((a, b) => Number(b.co === "sender") - Number(a.co === "sender") || Number(live(b)) - Number(live(a))).map((h) => h.c.id))].slice(0, 8);
   const out = (applicationId: number | null, matchedBy: Match["matchedBy"], ids: number[]) => ({
     applicationId,
     matchedBy,
     candidateIds: applicationId ? [] : ids,
     companyNamed: hits.length > 0,
-    titleNamed: titled.length > 0,
+    senderNamed: hits.some((h) => h.co === "sender"),
+    titleNamed: titledAll.length > 0,
   });
 
   const exact = titled.filter((h) => h.t === "exact");
@@ -325,8 +344,7 @@ export function matchEmail(e: { sender: Sender; subject: string; body: string },
   }
   const named = hits.filter((h) => h.co === "sender" && live(h));
   if (named.length === 1) return out(named[0].c.id, "company", []);
-  const ranked = [...hits].sort((a, b) => Number(live(b)) - Number(live(a)));
-  return out(null, null, ranked.map((h) => h.c.id).slice(0, 8));
+  return out(null, null, ranked);
 }
 
 // ---------- Is it about the job search at all ----------
@@ -340,7 +358,7 @@ const BOARD_APPLICATION_SUBJECT = /\byour application\b|\bapplication (?:was |ha
  * or a recruiter or a company Lodestar knows writing about an application. Bank, shopping and newsletter mail
  * from the same companies ("your credit card application") isn't.
  */
-export function isJobEmail(e: { sender: Sender; subject: string; body: string }, m: { companyNamed: boolean; titleNamed: boolean }): boolean {
+export function isJobEmail(e: { sender: Sender; subject: string; body: string }, m: Seen): boolean {
   const subject = plain(e.subject);
   const text = `${subject}\n${plain(e.body)}`;
   if (ACCOUNT_MAIL.test(subject)) return false;
@@ -349,6 +367,8 @@ export function isJobEmail(e: { sender: Sender; subject: string; body: string },
   if (atsOf(e.sender.domain)) return appPhrase || !/\bunsubscribe\b/i.test(text);
   const recruiter = RECRUITER_SENDER.test(`${e.sender.name ?? ""} ${e.sender.address ?? ""}`);
   if ((recruiter || m.companyNamed) && appPhrase) return true;
+  // Someone at the company writing to ask for a call, a test or a signature, in their own words.
+  if (m.senderNamed && asksSomething(e.subject, e.body)) return true;
   return m.companyNamed && m.titleNamed && /\b(?:position|role|opening|opportunity|recruit|candidate)\b/i.test(text);
 }
 

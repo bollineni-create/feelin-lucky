@@ -5,10 +5,10 @@
 // reply. Only this process talks to Mail, so macOS asks for permission once; the agent and the pages go through it.
 import { execFile } from "node:child_process";
 import path from "node:path";
-import { and, count, desc, eq, gte, inArray, isNull, notLike, or } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNull, ne, notLike, or, sql } from "drizzle-orm";
 import { ROOT, db, schema } from "./db";
 import { ApiError } from "./agent-auth";
-import { FOLLOW_UP_DAYS, activeRun, changeStage, daysAgo, getApplication, iso, listApplications, logEvent } from "./logic";
+import { FOLLOW_UP_DAYS, activeRun, autoApplyBlocker, changeStage, daysAgo, getApplication, iso, listApplications, logEvent } from "./logic";
 import { LIVE_STAGES, classify, companyDomain, emailStageMove, isJobEmail, matchEmail, parseSender, prefilter, type Candidate, type Sender } from "./mail-rules";
 import type { Application, Email, EmailKind, MailCheckSummary, MailSettings, Stage } from "@/db/schema";
 
@@ -21,6 +21,15 @@ const DAY = 86_400_000;
 /** Bodies kept per email, and read per check (the rest wait for the next check). */
 const BODY_CHARS = 6000;
 const MAX_BODIES = 80;
+/**
+ * Each check reads the last 10 days again (the first one, lookbackDays). Mail dates a message by when the server
+ * got it, so an account that syncs late (a Mac asleep over the weekend, an account offline) delivers older mail;
+ * messages already seen are skipped, so a wide window costs little.
+ */
+const RECHECK_DAYS = 10;
+/** Moves and flags per bridge call (a Gmail move takes a few seconds to check), and per check. */
+const FILE_BATCH = 10;
+const FILE_PER_CHECK = 40;
 /** Emails Lodestar still files or flags, by age. */
 const FILE_WINDOW_DAYS = 60;
 
@@ -76,9 +85,9 @@ export function mailLink(messageId: string) {
 
 // ---------- The bridge ----------
 
-type BridgeMessage = { message_id: string; mail_id: number | null; account: string | null; where: "inbox" | "junk"; sender: string; subject: string | null; received_at: string; body: string | null };
-type ListOut = { ok: true; running: boolean; accounts?: string[]; scanned?: number; newest?: string | null; truncated?: boolean; problems?: string[]; messages?: BridgeMessage[] };
-type FileResult = { message_id: string; moved_to?: string; mail_id?: number | null; still_in_inbox?: boolean; flagged?: boolean; gone?: boolean; skipped?: string; error?: string };
+type BridgeMessage = { message_id: string; mail_id: number | null; account: string | null; account_id?: string | null; where: "inbox" | "junk"; sender: string; subject: string | null; received_at: string; body: string | null };
+type ListOut = { ok: true; running: boolean; accounts?: string[]; scanned?: number; newest?: string | null; truncated?: boolean; unread?: number; problems?: string[]; messages?: BridgeMessage[] };
+type FileResult = { message_id: string; moved_to?: string; mail_id?: number | null; still_in_inbox?: boolean; rescued?: boolean; flagged?: boolean; gone?: boolean; skipped?: string; error?: string };
 type FileOut = { ok: true; results: FileResult[] };
 
 export const NOT_A_MAC = "Email tracking reads Apple Mail, so it only works with Lodestar running on your Mac.";
@@ -136,7 +145,8 @@ async function launchMail() {
 }
 
 function notify(message: string, subtitle?: string) {
-  const q = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').slice(0, 220)}"`;
+  // Cut first, then escape, so a cut can't land inside an escape.
+  const q = (s: string) => `"${s.slice(0, 220).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   const script = `display notification ${q(message)} with title "Lodestar"${subtitle ? ` subtitle ${q(subtitle)}` : ""}`;
   execFile(OSASCRIPT, ["-e", script], () => {});
 }
@@ -150,10 +160,10 @@ const laterOf = (a: string | null, b: string) => (a && a > b ? a : b);
 type Source = "mail" | "agent" | "you";
 
 /**
- * Records an email on an application: an event the first time they're tied together, the latest-email date, the
- * confirmation date, and, unless the email still needs reading, the stage it moves the application to.
- * `auto` (the app on its own) only moves an application to "applied" on a title match and outside a run: during
- * a run the agent may be submitting that application right now, and records it itself.
+ * Records an email on an application: an event when asked to (the first time they're tied together, or when the
+ * agent or you settle it), the latest-email date, the confirmation date, the next action, and, unless the email
+ * still needs reading, the stage it moves the application to. The app on its own (source "mail") only moves an
+ * application on a title match, and never to "applied" during a run: the agent may be submitting it right now.
  */
 function attach(e: Email, appId: number, o: { kind: EmailKind; source: Source; review: boolean; announce: boolean; stage?: Stage | null; summary?: string | null; matchedBy?: string | null }) {
   const app = getApplication(appId);
@@ -166,18 +176,20 @@ function attach(e: Email, appId: number, o: { kind: EmailKind; source: Source; r
       title: o.review ? `Email to read: ${quoted(e.subject)}` : KIND_TITLE[o.kind],
       detail: o.review
         ? `From ${fromLabel(e)}${o.kind !== "other" ? ` · looks like: ${KIND_LABEL[o.kind].toLowerCase()}` : ""}`
-        : `${fromLabel(e)}: ${quoted(e.subject)}${o.summary ? ` — ${o.summary}` : ""}${o.matchedBy === "company" ? " (matched by company: the one application in flight there)" : ""}`,
+        : `${fromLabel(e)}: ${quoted(e.subject)}${o.summary ? ` — ${o.summary}` : ""}`,
       source: o.source,
-      at: e.receivedAt,
+      at: o.source === "mail" ? e.receivedAt : iso(),
     });
   }
 
   const extra: Partial<Application> = { lastEmailAt: laterOf(app.lastEmailAt, e.receivedAt) };
   if (o.kind === "confirmation" && !o.review) extra.emailConfirmedAt = app.emailConfirmedAt ?? e.receivedAt;
+  const needsYou = NEEDS_REPLY.includes(o.kind) && app.stage !== "closed";
+  const replaceable = !app.nextAction || app.nextAction === "Follow up" || app.nextAction.startsWith("Read the email from");
 
   if (o.review) {
     // It needs reading: say so on the card, unless something more specific is already there.
-    if (app.stage !== "closed" && o.kind !== "confirmation" && o.kind !== "update" && (!app.nextAction || app.nextAction === "Follow up")) {
+    if (app.stage !== "closed" && o.kind !== "confirmation" && o.kind !== "update" && replaceable) {
       extra.nextAction = `Read the email from ${company}`;
       extra.nextActionDue = iso();
     }
@@ -187,9 +199,13 @@ function attach(e: Email, appId: number, o: { kind: EmailKind; source: Source; r
 
   const move = emailStageMove(app.stage, o.kind, o.stage);
   let to = "error" in move ? null : move.to;
-  if (o.source === "mail" && to === "applied" && (o.matchedBy !== "title" || activeRun())) to = null;
+  if (o.source === "mail" && (o.matchedBy !== "title" || (to === "applied" && activeRun()))) to = null;
   if (!to) {
-    if (app.nextAction?.startsWith("Read the email from")) {
+    // A request that doesn't move the stage (an assessment while applied, a second-round invite) still needs doing.
+    if (needsYou && (replaceable || o.source !== "mail")) {
+      extra.nextAction = NEXT_ACTION[o.kind]!(company);
+      extra.nextActionDue = iso();
+    } else if (app.nextAction?.startsWith("Read the email from")) {
       extra.nextAction = null;
       extra.nextActionDue = null;
     }
@@ -201,7 +217,8 @@ function attach(e: Email, appId: number, o: { kind: EmailKind; source: Source; r
     extra.needsSignin = false;
     extra.nextAction = "Follow up";
     extra.nextActionDue = iso(new Date(Date.parse(e.receivedAt) + FOLLOW_UP_DAYS * DAY));
-    if (o.kind === "confirmation") extra.emailConfirmedAt = app.emailConfirmedAt ?? e.receivedAt;
+    // A strong match the agent submitted without recording it still counts toward today's auto-apply cap.
+    if (app.stage === "found" && autoApplyBlocker(app) == null) extra.autoApplied = true;
   } else if (to === "closed") {
     extra.closedReason = "rejected";
     extra.nextAction = null;
@@ -212,11 +229,32 @@ function attach(e: Email, appId: number, o: { kind: EmailKind; source: Source; r
   }
   const outside = o.source === "mail" && to === "applied" ? ". You applied outside Lodestar, or the agent's submit wasn't recorded" : "";
   changeStage(appId, to, { source: o.source, detail: `Email from ${fromLabel(e)}: ${quoted(e.subject)}${o.summary ? ` — ${o.summary}` : ""}${outside}`, extra });
+  db.update(emails).set({ movedFrom: app.stage, movedTo: to }).where(eq(emails.id, e.id)).run();
+}
+
+/** The latest email still tied to an application, after one is untied from it. */
+function refreshLastEmail(appId: number) {
+  const latest = db
+    .select({ at: sql<string | null>`max(${emails.receivedAt})` })
+    .from(emails)
+    .where(and(eq(emails.applicationId, appId), ne(emails.status, "dismissed")))
+    .get()?.at ?? null;
+  const app = getApplication(appId);
+  if (!app) return;
+  const patch: Partial<Application> = { lastEmailAt: latest };
+  if (app.nextAction?.startsWith("Read the email from")) {
+    const stillToRead = db.select({ n: count() }).from(emails).where(and(eq(emails.applicationId, appId), eq(emails.status, "review"))).get()!.n;
+    if (!stillToRead) {
+      patch.nextAction = app.stage === "applied" ? "Follow up" : null;
+      patch.nextActionDue = app.stage === "applied" && app.submittedAt ? iso(new Date(Date.parse(app.submittedAt) + FOLLOW_UP_DAYS * DAY)) : null;
+    }
+  }
+  db.update(applications).set(patch).where(eq(applications.id, appId)).run();
 }
 
 /**
  * Confirmations and status updates recorded during a run leave a found or approved application where it was (see
- * attach). Once no run is going, they move it to applied.
+ * attach). Once no run is going, they move it to applied, unless someone has moved the application since.
  */
 function settleDeferred() {
   if (activeRun()) return;
@@ -224,7 +262,16 @@ function settleDeferred() {
     .select({ e: emails, stage: applications.stage })
     .from(emails)
     .innerJoin(applications, eq(emails.applicationId, applications.id))
-    .where(and(eq(emails.status, "done"), eq(emails.matchedBy, "title"), inArray(emails.kind, ["confirmation", "update"]), inArray(applications.stage, ["found", "approved"])))
+    .where(
+      and(
+        eq(emails.status, "done"),
+        eq(emails.matchedBy, "title"),
+        inArray(emails.kind, ["confirmation", "update"]),
+        inArray(applications.stage, ["found", "approved"]),
+        // Moved since the email was recorded (you set it back to found, say): that's a decision, leave it.
+        sql`${applications.stageChangedAt} <= ${emails.resolvedAt}`,
+      ),
+    )
     .all();
   for (const { e } of rows) attach(e, e.applicationId!, { kind: e.kind, source: "mail", review: false, announce: false, matchedBy: "title" });
 }
@@ -296,9 +343,7 @@ async function runCheck({ launch = false }: { launch?: boolean }): Promise<MailC
   try {
     if (launch) await launchMail();
     const cands = candidates();
-    const lookback = iso(daysAgo(s.lookbackDays));
-    const overlap = s.checkedThrough ? iso(new Date(Date.parse(s.checkedThrough) - DAY)) : lookback;
-    const since = overlap > lookback ? overlap : lookback;
+    const since = iso(daysAgo(firstCheck ? s.lookbackDays : Math.min(s.lookbackDays, RECHECK_DAYS)));
     const known = new Set(db.select({ m: emails.messageId }).from(emails).where(gte(emails.receivedAt, since)).all().map((r) => r.m));
     const skip = seen();
     const list = await bridge<ListOut>({
@@ -337,18 +382,27 @@ async function runCheck({ launch = false }: { launch?: boolean }): Promise<MailC
       else summary.to_review++;
     }
     settleDeferred();
-    summary.filed = await fileEmails(getMailSettings(), launch);
-
     if (s.notify) announce(fresh, firstCheck, s.lookbackDays);
+    // Reading is done and recorded; filing is a tidy-up, so a filing failure doesn't fail the check.
+    let fileProblem: string | null = null;
+    try {
+      summary.filed = await fileEmails(getMailSettings(), launch);
+    } catch (err) {
+      fileProblem = `Read your mail, but couldn't file it: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    const unread = list.problems?.length ? ` Couldn't read ${list.problems.join("; ")}.` : "";
     updateMailSettings({
       knownAccounts: list.accounts ?? s.knownAccounts,
-      checkedThrough: list.newest && (!s.checkedThrough || list.newest > s.checkedThrough) ? list.newest : s.checkedThrough,
       lastCheckAt: iso(),
       lastOkAt: iso(),
-      lastError: null,
+      lastError: fileProblem ?? (unread ? unread.trim() : null),
       lastSummary: summary,
     });
-    return { ok: true, summary, message: `Checked: ${summaryText(summary)}.${list.truncated ? " More to read; the next check carries on." : ""}` };
+    return {
+      ok: true,
+      summary,
+      message: `Checked: ${summaryText(summary)}.${list.truncated || list.unread ? " More to read; the next check carries on." : ""}${unread}${fileProblem ? ` ${fileProblem}` : ""}`,
+    };
   } catch (err) {
     const error = err instanceof MailError ? err.message : explainMailError(err instanceof Error ? err.message : String(err));
     updateMailSettings({ lastCheckAt: iso(), lastError: error });
@@ -359,12 +413,15 @@ async function runCheck({ launch = false }: { launch?: boolean }): Promise<MailC
 function recordNew(m: BridgeMessage, sender: Sender, match: ReturnType<typeof matchEmail>): Email | null {
   const c = classify(m.subject, m.body, sender);
   const app = match.applicationId ? getApplication(match.applicationId) : undefined;
-  const done = Boolean(app && c.confident);
+  // Only a confident reading tied by company and title is recorded on its own; a company-only match is a suggestion.
+  // A rejection found in Junk (where spoofed mail lands) waits for review rather than closing an application.
+  const done = Boolean(app && c.confident && match.matchedBy === "title" && !(m.where === "junk" && c.kind === "rejection"));
   const row = db
     .insert(emails)
     .values({
       messageId: m.message_id,
       account: m.account,
+      accountId: m.account_id ?? null,
       mailbox: m.where,
       mailId: m.mail_id,
       fromName: sender.name,
@@ -413,9 +470,13 @@ function announce(fresh: Email[], firstCheck: boolean, lookbackDays: number) {
 // ---------- Filing in Mail ----------
 
 function wanted(e: Email, s: MailSettings) {
+  const move = s.fileEmails && e.status === "done" && RECORD_ONLY.includes(e.kind);
   return {
-    move: s.fileEmails && e.status === "done" && RECORD_ONLY.includes(e.kind),
+    move,
     flag: s.flagNeedsReply && e.status !== "dismissed" && NEEDS_REPLY.includes(e.kind),
+    // A job email in Junk that isn't being filed (an interview request, one waiting for review) goes back to the
+    // inbox, where you'll see it, rather than sitting where Mail may delete it unread.
+    rescue: e.mailbox === "junk" && e.status !== "dismissed" && !(move && !e.filedTo),
   };
 }
 
@@ -435,14 +496,32 @@ async function fileEmails(s: MailSettings, retryFailed: boolean): Promise<number
       const w = wanted(e, s);
       const move = w.move && !e.filedTo && !e.fileError?.startsWith("skip:");
       const flag = w.flag !== e.flagged ? w.flag : null;
-      return move || flag !== null ? { e, move, flag } : null;
+      return move || w.rescue || flag !== null ? { e, move, rescue: w.rescue, flag } : null;
     })
-    .filter((a): a is { e: Email; move: boolean; flag: boolean | null } => a !== null);
-  if (!actions.length) return 0;
+    .filter((a): a is FileAction => a !== null);
+  let moved = 0;
+  // In small batches, each saved before the next: a big backlog (filing just turned on) can't time out the lot.
+  const todo = actions.slice(0, FILE_PER_CHECK);
+  for (let i = 0; i < todo.length; i += FILE_BATCH) moved += await fileBatch(todo.slice(i, i + FILE_BATCH), s);
+  return moved;
+}
+
+type FileAction = { e: Email; move: boolean; rescue: boolean; flag: boolean | null };
+
+async function fileBatch(actions: FileAction[], s: MailSettings): Promise<number> {
   const out = await bridge<FileOut>({
     cmd: "file",
     mailbox: s.mailboxName,
-    actions: actions.map((a) => ({ message_id: a.e.messageId, mail_id: a.e.mailId, account: a.e.account, where: a.e.mailbox ?? "inbox", move: a.move, flag: a.flag })),
+    actions: actions.map((a) => ({
+      message_id: a.e.messageId,
+      mail_id: a.e.mailId,
+      account_id: a.e.accountId,
+      account: a.e.account,
+      where: a.e.mailbox ?? "inbox",
+      move: a.move,
+      rescue: a.rescue,
+      flag: a.flag,
+    })),
   });
   let moved = 0;
   const byId = new Map(actions.map((a) => [a.e.messageId, a]));
@@ -451,13 +530,16 @@ async function fileEmails(s: MailSettings, retryFailed: boolean): Promise<number
     if (!a) continue;
     const patch: Partial<Email> = { fileError: a.e.fileError?.startsWith("skip:") ? a.e.fileError : null };
     if (r.moved_to) {
-      // On Gmail a scripted move usually adds the label and leaves the message in the inbox too; that counts.
+      // On Gmail a scripted move usually adds the label and leaves the message in the inbox too; that counts. Either
+      // way the copy in the Lodestar mailbox is the one to find again (to flag or unflag it).
       patch.filedTo = r.moved_to;
-      if (!r.still_in_inbox) {
-        patch.mailbox = r.moved_to;
-        patch.mailId = r.mail_id ?? null;
-      }
+      patch.mailbox = r.moved_to;
+      patch.mailId = r.mail_id ?? null;
       moved++;
+    }
+    if (r.rescued) {
+      patch.mailbox = "inbox";
+      patch.mailId = r.mail_id ?? null;
     }
     if (typeof r.flagged === "boolean") patch.flagged = r.flagged;
     // Not where Lodestar left it (you moved or deleted it), or an account it can't file in: leave it be from now on.
@@ -485,7 +567,14 @@ export function resolveEmail(id: number, r: Resolution, source: "agent" | "you")
   const summary = r.summary?.trim().slice(0, 300) || e.summary;
 
   if (r.dismiss) {
-    return db.update(emails).set({ status: "dismissed", summary, resolvedAt: iso(), matchedBy: source }).where(eq(emails.id, id)).returning().get();
+    const updated = db
+      .update(emails)
+      .set({ status: "dismissed", summary, resolvedAt: iso(), matchedBy: source, applicationId: null, candidateIds: e.applicationId ? [e.applicationId] : e.candidateIds })
+      .where(eq(emails.id, id))
+      .returning()
+      .get();
+    if (e.applicationId) refreshLastEmail(e.applicationId);
+    return updated;
   }
   const appId = r.applicationId ?? e.applicationId;
   if (!appId) throw new ApiError(400, "application_id is required (or dismiss: true if it isn't about an application in Lodestar)");
@@ -494,6 +583,11 @@ export function resolveEmail(id: number, r: Resolution, source: "agent" | "you")
   const kind = r.kind ?? e.kind;
   const move = emailStageMove(app.stage, kind, r.stage);
   if ("error" in move) throw new ApiError(400, `can't move application ${appId}: ${move.error}`);
+  // Whether the user applied to a job Lodestar hasn't sent is the user's call: the agent can't mark a found or
+  // approved application as applied (or further) on an email's say-so, which would take it out of the Queue.
+  if (source === "agent" && move.to && (app.stage === "found" || app.stage === "approved")) {
+    throw new ApiError(403, `application ${appId} is still ${app.stage}: only the user can mark it as applied from an email. Leave this email for them (it stays on the Mail page).`);
+  }
 
   const updated = db
     .update(emails)
@@ -501,18 +595,41 @@ export function resolveEmail(id: number, r: Resolution, source: "agent" | "you")
     .where(eq(emails.id, id))
     .returning()
     .get();
-  attach(updated, appId, { kind, source, review: false, announce: e.applicationId !== appId, stage: r.stage, summary: r.summary ?? null, matchedBy: source });
+  // Logged unless the stage change already says it (with the subject and summary).
+  attach(updated, appId, { kind, source, review: false, announce: e.applicationId !== appId || !move.to, stage: r.stage, summary: r.summary ?? null, matchedBy: source });
+  if (e.applicationId && e.applicationId !== appId) refreshLastEmail(e.applicationId);
   return updated;
 }
 
-/** Puts a recorded email back up for review, e.g. when it went to the wrong application. Stages stay as they are. */
+/**
+ * Puts a recorded email back up for review, e.g. when it went to the wrong application, and undoes what it did there
+ * if nothing has happened since: the stage it moved the application to, its confirmation date, its next action.
+ */
 export function reopenEmail(id: number) {
   const e = db.select().from(emails).where(eq(emails.id, id)).get();
   if (!e) return;
+  const app = e.applicationId ? getApplication(e.applicationId) : undefined;
+  if (app) {
+    const extra: Partial<Application> = {};
+    if (e.kind === "confirmation" && app.emailConfirmedAt === e.receivedAt) extra.emailConfirmedAt = null;
+    if (e.movedFrom && e.movedTo && app.stage === e.movedTo) {
+      if (e.movedTo === "closed") extra.closedReason = null;
+      if (e.movedFrom === "found" || e.movedFrom === "approved") {
+        if (app.submittedAt === e.receivedAt) extra.submittedAt = null;
+        extra.autoApplied = false;
+      }
+      extra.nextAction = e.movedFrom === "applied" ? "Follow up" : null;
+      extra.nextActionDue = null;
+      changeStage(app.id, e.movedFrom, { source: "you", detail: `Undone: the email ${quoted(e.subject)} was about something else`, extra });
+    } else if (Object.keys(extra).length) {
+      db.update(applications).set(extra).where(eq(applications.id, app.id)).run();
+    }
+  }
   db.update(emails)
-    .set({ status: "review", applicationId: null, candidateIds: e.applicationId ? [e.applicationId] : e.candidateIds, matchedBy: null, resolvedAt: null })
+    .set({ status: "review", applicationId: null, candidateIds: e.applicationId ? [e.applicationId] : e.candidateIds, matchedBy: null, resolvedAt: null, movedFrom: null, movedTo: null })
     .where(eq(emails.id, id))
     .run();
+  if (app) refreshLastEmail(app.id);
 }
 
 // ---------- For the agent ----------

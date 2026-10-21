@@ -143,9 +143,11 @@ export const emails = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     // The RFC Message-ID header, which stays the same when the message moves between mailboxes.
     messageId: text("message_id").notNull(),
-    // Where it is in Mail, to find it again quickly: the account, "inbox", "junk" or the mailbox Lodestar filed it
-    // in, and Mail's own id for it there (which changes when it moves). Message-ID searches are slow in Mail.
+    // Where it is in Mail, to find it again quickly: the account (its name, and Mail's id for it: two accounts can
+    // share a name), "inbox", "junk" or the mailbox Lodestar filed it in, and Mail's own id for the message there
+    // (which changes when it moves). Message-ID searches are slow in Mail.
     account: text("account"),
+    accountId: text("account_id"),
     mailbox: text("mailbox"),
     mailId: integer("mail_id"),
     fromName: text("from_name"),
@@ -164,6 +166,9 @@ export const emails = sqliteTable(
     candidateIds: text("candidate_ids", { mode: "json" }).$type<number[]>(),
     // One line from the agent or you on what it says.
     summary: text("summary"),
+    // The stage move it made on its application (from → to), so "Wrong? Look again" can put it back.
+    movedFrom: text("moved_from", { enum: STAGES }),
+    movedTo: text("moved_to", { enum: STAGES }),
     // The mailbox Lodestar moved it to in Mail, whether Lodestar flagged it, and why filing it failed, if it did.
     filedTo: text("filed_to"),
     flagged: integer("flagged", { mode: "boolean" }).notNull().default(false),
@@ -190,8 +195,6 @@ export const mailSettings = sqliteTable("mail_settings", {
   accounts: text("accounts", { mode: "json" }).$type<string[]>().notNull().default([]),
   lookbackDays: integer("lookback_days").notNull().default(30),
   knownAccounts: text("known_accounts", { mode: "json" }).$type<string[]>(),
-  // The newest message the last check saw; the next one reads from a day before it.
-  checkedThrough: text("checked_through"),
   lastCheckAt: text("last_check_at"),
   lastOkAt: text("last_ok_at"),
   lastError: text("last_error"),

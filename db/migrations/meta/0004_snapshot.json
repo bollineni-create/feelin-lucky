@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "eec12d33-38f7-43f0-97bc-72ef8ec0ae69",
+  "id": "5d59244e-bb55-48e5-a37c-6591470f391b",
   "prevId": "f0a96f4b-b7a4-48f0-baf9-4afb0b8f6cc3",
   "tables": {
     "applications": {
@@ -342,6 +342,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "mailbox": {
           "name": "mailbox",
           "type": "text",
@@ -428,6 +435,20 @@
         },
         "summary": {
           "name": "summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "moved_from": {
+          "name": "moved_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "moved_to": {
+          "name": "moved_to",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -814,13 +835,6 @@
         },
         "known_accounts": {
           "name": "known_accounts",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "checked_through": {
-          "name": "checked_through",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

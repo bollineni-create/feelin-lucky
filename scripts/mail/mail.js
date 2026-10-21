@@ -7,9 +7,10 @@
 //           only of those whose sender domain is in `domains` or whose sender or subject has one of `terms` (the rest
 //           are never read), skipping Message-IDs in `known`. Oldest first, at most `max_bodies`. `fetch` has Mail
 //           check its servers first.
-//   file    {mailbox, actions: [{message_id, mail_id, account, where, move, flag}]}: finds each message where the
-//           listing (or an earlier filing) left it, sets or clears its flag, and moves it into `mailbox` inside its
-//           own account, making that mailbox there if needed.
+//   file    {mailbox, actions: [{message_id, mail_id, account_id, account, where, move, rescue, flag}]}: finds each
+//           message where the listing (or an earlier filing) left it, sets or clears its flag, and moves it into
+//           `mailbox` inside its own account (making that mailbox there if needed), or with `rescue` from Junk back
+//           to the account's inbox. A message is reported `gone` only when Mail says it isn't there (-1728).
 // It never sends, replies to or deletes anything. Failures come back as {ok: false, error, number}; -1743 means
 // macOS hasn't allowed this to control Mail. scripts/mail/mail.test.ts runs it against a stand-in Mail.
 //
@@ -103,7 +104,8 @@ function accountBoxes(Mail, where) {
     var unified = where === "junk" ? Mail.junkMailbox : Mail.inbox;
     unified.mailboxes().forEach(function (mb) {
       try {
-        out.push({ account: mb.account().name(), box: mb });
+        var acct = mb.account();
+        out.push({ account: acct.name(), accountId: acct.id(), box: mb });
       } catch (e) {}
     });
   } catch (e) {}
@@ -114,35 +116,52 @@ function accountBoxes(Mail, where) {
       var names = BOX_NAMES[where];
       for (var i = 0; i < names.length; i++) {
         var mb = findBox(acct, names[i]);
-        if (mb) return out.push({ account: acct.name(), box: mb });
+        if (mb) return out.push({ account: acct.name(), accountId: acct.id(), box: mb });
       }
     } catch (e) {}
   });
   return out;
 }
 
-function boxFor(Mail, where, account) {
+function boxFor(Mail, where, accountId, account) {
   var all = accountBoxes(Mail, where);
-  for (var i = 0; i < all.length; i++) if (all[i].account === account) return all[i].box;
+  for (var i = 0; i < all.length; i++) if (accountId ? all[i].accountId === accountId : all[i].account === account) return all[i].box;
   return null;
+}
+
+// The account a message was listed in, by Mail's id for it (two accounts can share a name), else by name.
+function accountFor(Mail, accountId, account) {
+  if (accountId) {
+    var hits = Mail.accounts.whose({ id: accountId })();
+    return hits.length ? hits[0] : null;
+  }
+  try {
+    var acct = Mail.accounts.byName(account);
+    acct.name();
+    return acct;
+  } catch (e) {
+    if (errNum(e) === -1728) return null;
+    throw e;
+  }
 }
 
 // A message by Mail's own id in a mailbox, checked against its Message-ID. `scan` also searches by Message-ID,
 // which is only reasonable in a small mailbox (Junk, Lodestar).
+// Only Mail saying "can't get object" (-1728) means the message isn't there; anything else (Mail busy, quitting, a
+// permission withdrawn) is passed on, so the caller retries rather than giving up on the message.
 function findMessage(box, mailId, messageId, scan) {
   var want = bare(messageId);
   if (mailId != null) {
     try {
       var m = box.messages.byId(Number(mailId));
       if (bare(m.messageId()) === want) return m;
-    } catch (e) {}
+    } catch (e) {
+      if (errNum(e) !== -1728) throw e;
+    }
   }
   if (!scan) return null;
-  try {
-    var hits = box.messages.whose({ _or: [{ messageId: want }, { messageId: "<" + want + ">" }] })();
-    if (hits.length) return hits[0];
-  } catch (e) {}
-  return null;
+  var hits = box.messages.whose({ _or: [{ messageId: want }, { messageId: "<" + want + ">" }] })();
+  return hits.length ? hits[0] : null;
 }
 
 // ---------- list ----------
@@ -163,7 +182,8 @@ function headers(box, spec) {
       var h = { id: attempt ? spec.id() : ids };
       FIELDS.forEach(function (f) { h[f] = spec[f](); });
       var n = h.id.length;
-      if (FIELDS.every(function (f) { return h[f].length === n; })) return h;
+      // The same messages, in the same order, before and after: nothing arrived or left in between.
+      if (FIELDS.every(function (f) { return h[f].length === n; }) && String(spec.id()) === String(h.id)) return h;
     }
   }
   var out = { id: [] };
@@ -185,6 +205,11 @@ function list(Mail, input) {
   if (input.fetch) {
     try {
       Mail.checkForNewMail();
+      // It returns at once; give the download a few seconds to finish before reading.
+      for (var w = 0; w < 10; w++) {
+        wait(1);
+        if (Mail.backgroundActivityCount() === 0) break;
+      }
     } catch (e) {}
   }
   var accounts = Mail.accounts.name();
@@ -193,8 +218,8 @@ function list(Mail, input) {
   var known = {};
   (input.known || []).forEach(function (k) { known[bare(k)] = true; });
   var relevant = looksRelevant(input);
-  var sources = accountBoxes(Mail, "inbox").map(function (s) { return { account: s.account, box: s.box, where: "inbox" }; });
-  if (input.include_junk) sources = sources.concat(accountBoxes(Mail, "junk").map(function (s) { return { account: s.account, box: s.box, where: "junk" }; }));
+  var sources = accountBoxes(Mail, "inbox").map(function (s) { return { account: s.account, accountId: s.accountId, box: s.box, where: "inbox" }; });
+  if (input.include_junk) sources = sources.concat(accountBoxes(Mail, "junk").map(function (s) { return { account: s.account, accountId: s.accountId, box: s.box, where: "junk" }; }));
   sources = sources.filter(function (s) { return !wanted.length || wanted.indexOf(s.account) >= 0; });
 
   var scanned = 0;
@@ -234,23 +259,33 @@ function list(Mail, input) {
   if (truncated && take.length) newest = take[take.length - 1].date;
 
   var messages = [];
+  var unread = 0;
   take.forEach(function (p) {
-    var msg = findMessage(p.src.box, p.id, p.messageId, false);
-    if (!msg) return;
     var body = "";
+    var msg = null;
     try {
+      msg = findMessage(p.src.box, p.id, p.messageId, false);
       // Attachments and inline images show up as U+FFFC.
-      body = String(msg.content() || "").replace(/\uFFFC/g, "").replace(/\r\n?/g, "\n").slice(0, chars);
-    } catch (e) {}
+      if (msg) body = String(msg.content() || "").replace(/\uFFFC/g, "").replace(/\r\n?/g, "\n");
+    } catch (e) {
+      if (errNum(e) === -1743) throw e;
+      msg = null;
+    }
+    // Moved meanwhile, or a body Mail couldn't give yet (still downloading): left out, so the next check reads it.
+    if (!msg || !body.trim()) {
+      unread++;
+      return;
+    }
     messages.push({
       message_id: p.messageId,
       mail_id: p.id,
       account: p.src.account,
+      account_id: p.src.accountId,
       where: p.src.where,
       sender: p.sender,
       subject: p.subject,
       received_at: new Date(p.date).toISOString(),
-      body: body,
+      body: body.slice(0, chars),
     });
   });
 
@@ -261,6 +296,7 @@ function list(Mail, input) {
     scanned: scanned,
     newest: newest ? newest.toISOString() : null,
     truncated: truncated,
+    unread: unread,
     problems: problems,
     messages: messages,
   };
@@ -321,37 +357,51 @@ function ensureMailbox(Mail, acct, name, sh, cache) {
   throw new Error(msg);
 }
 
-// Whether the reference to the message's old place has gone dead (-1728), which is what a real move does.
+// Whether the message has left where it was: its reference is dead (-1728), or it's an IMAP copy marked deleted
+// until the server expunges it.
 function leftSource(msg) {
-  for (var i = 0; i < 6; i++) {
-    try {
-      msg.messageId();
-    } catch (e) {
-      if (errNum(e) === -1728) return true;
-      return false;
-    }
+  try {
+    return msg.deletedStatus() === true;
+  } catch (e) {
+    return errNum(e) === -1728;
+  }
+}
+
+// The moved copy in the destination, given a moment to show up.
+function landedIn(box, messageId) {
+  for (var i = 0; i < 4; i++) {
+    var m = findMessage(box, null, messageId, true);
+    if (m) return m;
     wait(0.5);
   }
-  return false;
+  return null;
 }
 
 // Moves the message and reports what happened: {moved_to, mail_id, still_in_inbox}. Gmail usually keeps a
-// scripted move in the inbox and adds the label, which counts as filed.
+// scripted move in the inbox and adds the label, which counts as filed. Mail can raise an error and still move, so
+// the destination is looked at before anything else is tried.
 function moveTo(Mail, msg, box, name, messageId) {
+  var failure = null;
   try {
     Mail.move(msg, { to: box });
   } catch (e) {
+    failure = e;
+  }
+  var landed = landedIn(box, messageId);
+  if (!landed && failure) {
     // Reached by id through a mailbox that isn't its own container (Gmail files inbox mail under All Mail), Mail
     // can't move it: look it up through its own mailbox and try again, then the other way of moving.
     try {
       msg = msg.mailbox().messages.byId(msg.id());
       Mail.move(msg, { to: box });
     } catch (e2) {
-      msg.mailbox = box;
+      try {
+        msg.mailbox = box;
+      } catch (e3) {}
     }
+    landed = landedIn(box, messageId);
   }
   var left = leftSource(msg);
-  var landed = findMessage(box, null, messageId, true);
   if (landed) {
     var r = { moved_to: name, mail_id: null };
     try {
@@ -361,7 +411,7 @@ function moveTo(Mail, msg, box, name, messageId) {
     return { result: r, message: landed };
   }
   if (left) return { result: { moved_to: name, mail_id: null }, message: null };
-  throw new Error("Mail didn't move it.");
+  throw failure || new Error("Mail didn't move it.");
 }
 
 function file(Mail, input, sh) {
@@ -371,18 +421,17 @@ function file(Mail, input, sh) {
   var results = (input.actions || []).map(function (a) {
     var r = { message_id: a.message_id };
     try {
-      var acct = Mail.accounts.byName(a.account);
-      try {
-        if (acct.enabled() === false) {
-          r.error = a.account + " is turned off in Mail.";
-          return r;
-        }
-      } catch (e) {
+      var acct = accountFor(Mail, a.account_id, a.account);
+      if (!acct) {
         r.gone = true;
         return r;
       }
+      if (acct.enabled() === false) {
+        r.error = a.account + " is turned off in Mail.";
+        return r;
+      }
       var where = a.where || "inbox";
-      var box = where === "inbox" || where === "junk" ? boxFor(Mail, where, a.account) : findBox(acct, where);
+      var box = where === "inbox" || where === "junk" ? boxFor(Mail, where, a.account_id, a.account) : findBox(acct, where);
       // A big inbox is only looked up by id; Junk and Lodestar are small enough to search.
       var msg = box ? findMessage(box, a.mail_id, a.message_id, where !== "inbox") : null;
       if (!msg) {
@@ -393,6 +442,8 @@ function file(Mail, input, sh) {
         msg.flaggedStatus = a.flag;
         r.flagged = a.flag;
       }
+      var dest = null;
+      var destName = null;
       if (a.move) {
         var type = "";
         try {
@@ -401,16 +452,29 @@ function file(Mail, input, sh) {
         // Exchange shows up as "unknown"; a mailbox a script makes there may never reach the server.
         if (type === "unknown") {
           r.skipped = "Mail can't reliably make a mailbox in this account (Exchange) from a script, so its job emails stay where they are.";
-          return r;
+        } else {
+          dest = ensureMailbox(Mail, acct, name, sh, cache);
+          destName = name;
         }
-        var dest = ensureMailbox(Mail, acct, name, sh, cache);
+      }
+      // Something to answer shouldn't sit in Junk, where it can be deleted unread: back to the account's inbox.
+      if (!dest && a.rescue && where === "junk") {
+        dest = boxFor(Mail, "inbox", a.account_id, a.account);
+        destName = "inbox";
+      }
+      if (dest) {
         if (where === "junk") {
           try {
             msg.junkMailStatus = false;
           } catch (e) {}
         }
-        var moved = moveTo(Mail, msg, dest, name, a.message_id);
-        Object.keys(moved.result).forEach(function (k) { r[k] = moved.result[k]; });
+        var moved = moveTo(Mail, msg, dest, destName, a.message_id);
+        if (destName === "inbox") {
+          r.rescued = true;
+          r.mail_id = moved.result.mail_id;
+        } else {
+          Object.keys(moved.result).forEach(function (k) { r[k] = moved.result[k]; });
+        }
         if (a.flag === true && moved.message) {
           try {
             moved.message.flaggedStatus = true;
@@ -418,8 +482,8 @@ function file(Mail, input, sh) {
         }
       }
     } catch (e) {
-      r.error = String((e && e.message) || e);
       if (errNum(e) === -1743) throw e;
+      r.error = String((e && e.message) || e);
     }
     return r;
   });

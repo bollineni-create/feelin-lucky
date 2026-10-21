@@ -42,6 +42,10 @@ before(async () => {
   L = await import("./logic");
   M = await import("./mail");
   const { db, schema } = D;
+  // What setup seeds on every install.
+  const { SEED_CRITERIA } = await import("../db/seed-data");
+  db.insert(schema.searchCriteria).values({ id: 1, ...SEED_CRITERIA }).run();
+  db.insert(schema.profile).values({ id: 1, fullName: "Test", workHistory: [], education: [], skills: [], confirmed: true }).run();
   const co = (name: string, careersUrl: string | null) => db.insert(schema.companies).values({ name, careersUrl }).returning().get().id;
   const companies = { Stripe: co("Stripe", "https://stripe.com/jobs"), Plaid: co("Plaid", "https://plaid.com/careers"), Ramp: co("Ramp", null), Visa: co("Visa", "https://usa.visa.com/careers") };
   const job = (key: string, company: keyof typeof companies, title: string, stage: "found" | "approved" | "applied") => {
@@ -80,16 +84,18 @@ before(async () => {
 test("the first check records what it's sure of, leaves the rest for review, and files and flags in Mail", async () => {
   const r = await M.checkMail({ launch: true });
   assert.ok(r.ok, !r.ok ? r.error : "");
-  assert.deepEqual({ ...r.summary }, { looked_at: 7, new: 5, recorded: 3, to_review: 2, filed: 3 });
+  assert.deepEqual({ ...r.summary }, { looked_at: 7, new: 5, recorded: 2, to_review: 3, filed: 2 });
 
   // A confirmation for an application you approved and sent yourself: applied, confirmed by email.
   assert.equal(app("stripe-sfm").stage, "applied");
   assert.ok(app("stripe-sfm").emailConfirmedAt);
   assert.equal(app("stripe-sfm").needsSignin, false);
   assert.equal(app("stripe-sfm").nextAction, "Follow up");
-  // A rejection from the one Plaid application in flight.
-  assert.equal(app("plaid").stage, "closed");
-  assert.equal(app("plaid").closedReason, "rejected");
+  // A rejection naming only the company: suggested for the one Plaid application in flight, not recorded on its own.
+  assert.equal(app("plaid").stage, "applied");
+  assert.equal(app("plaid").nextAction, "Read the email from Plaid");
+  assert.equal(emailBy("An update on your application")!.status, "review");
+  assert.equal(emailBy("An update on your application")!.applicationId, ids.plaid);
   // A found job you applied to outside Lodestar, matched on its title.
   assert.equal(app("ramp").stage, "applied");
   // A recruiter asking to talk: noted, waiting for review, nothing moved.
@@ -110,7 +116,7 @@ test("the first check records what it's sure of, leaves the rest for review, and
   const mail = mailState();
   const gmail = mail.accts.find((a) => a.name === "Gmail")!;
   const icloud = mail.accts.find((a) => a.name === "iCloud")!;
-  assert.deepEqual(gmail.boxes.find((b) => b.name === "Lodestar")!.msgs.map((m) => m.messageId).sort(), ["g1@greenhouse", "g2@plaid"]);
+  assert.deepEqual(gmail.boxes.find((b) => b.name === "Lodestar")!.msgs.map((m) => m.messageId).sort(), ["g1@greenhouse"]);
   assert.equal(gmail.boxes.find((b) => b.name === "INBOX")!.msgs.find((m) => m.messageId === "g3@visa")!.flagged, true);
   assert.deepEqual(icloud.boxes.find((b) => b.name === "Lodestar")!.msgs.map((m) => m.messageId), ["i2@ashby"]);
   assert.equal(emailBy("Thanks for applying to Ramp")!.mailbox, "Lodestar");
@@ -121,11 +127,11 @@ test("the first check records what it's sure of, leaves the rest for review, and
   await new Promise((done) => setTimeout(done, 500));
   const notes = fs.readFileSync(NOTES, "utf8").trim().split("\n");
   assert.equal(notes.length, 1);
-  assert.match(notes[0], /Read 5 job emails from the last 30 days/);
+  assert.match(notes[0], /Read 5 job emails from the last 30 days: 2 confirmations, 3 to look at/);
 
   // Events on the applications.
   const events = D.db.select().from(D.schema.events).all();
-  assert.ok(events.some((e) => e.applicationId === ids.plaid && e.type === "email" && e.title === "Rejection email"));
+  assert.ok(events.some((e) => e.applicationId === ids.plaid && e.type === "email" && e.title.startsWith("Email to read")));
   assert.ok(events.some((e) => e.applicationId === ids.visa && e.title.startsWith("Email to read")));
 });
 
@@ -140,7 +146,7 @@ test("a second check finds nothing new and changes nothing", async () => {
 
 test("the agent sees the emails to review, and settles one; it can't touch it again", () => {
   const ctx = M.mailContext();
-  assert.equal(ctx.to_review_total, 2);
+  assert.equal(ctx.to_review_total, 3);
   const stripe = ctx.to_review.find((e) => e.subject === "Your application")!;
   assert.equal(stripe.guess, "rejection");
   assert.equal(stripe.could_be.length, 2);
@@ -154,14 +160,17 @@ test("the agent sees the emails to review, and settles one; it can't touch it ag
   assert.throws(() => M.resolveEmail(stripe.email_id, { applicationId: ids["stripe-ta"], kind: "update", stage: "approved" }, "agent"), /can't move/);
 });
 
-test("you settle the Stripe one; the next check files it out of Junk", async () => {
+test("you settle the Stripe and Plaid ones; the next check files them, out of Junk too", async () => {
   const stripe = emailBy("Your application")!;
   M.resolveEmail(stripe.id, { applicationId: ids["stripe-ta"], kind: "rejection", stage: "closed" }, "you");
   assert.equal(app("stripe-ta").stage, "closed");
+  M.resolveEmail(emailBy("An update on your application")!.id, { kind: "rejection" }, "agent");
+  assert.equal(app("plaid").stage, "closed");
+  assert.equal(app("plaid").closedReason, "rejected");
   assert.equal(M.toReviewCount(), 0);
   const r = await M.checkMail({ launch: true });
   assert.ok(r.ok);
-  assert.equal(r.summary.filed, 1);
+  assert.equal(r.summary.filed, 2);
   const icloud = mailState().accts.find((a) => a.name === "iCloud")!;
   const filed = icloud.boxes.find((b) => b.name === "Lodestar")!.msgs.find((m) => m.messageId === "i1@stripe")!;
   assert.equal(filed.junk, false);
@@ -208,4 +217,75 @@ test("when macOS says no, the error says where to allow it", async () => {
   setMail((_s, raw) => (raw.denied = false));
   assert.ok((await M.checkMail()).ok);
   assert.equal(M.getMailSettings().lastError, null);
+});
+
+// ---------- Regressions found in review ----------
+
+test("a job you set back after an email moved it stays where you put it", async () => {
+  assert.equal(app("ramp").stage, "applied");
+  L.changeStage(ids.ramp, "found", { source: "you" });
+  await new Promise((done) => setTimeout(done, 5));
+  assert.ok((await M.checkMail()).ok);
+  assert.equal(app("ramp").stage, "found");
+});
+
+test("the agent can't mark a found job applied from an email; you can", async () => {
+  setMail((s) => {
+    const inbox = s.accts[1].boxes[0];
+    inbox.msgs.push({ id: s.nextId++, messageId: "r2@ramp", sender: "Ramp Recruiting <recruiting@ramp.com>", subject: "Quick update", date: hoursAgo(2), content: "Thanks for your application to Ramp. We're still reviewing.", flagged: false, junk: false, deleted: false, box: inbox });
+  });
+  assert.ok((await M.checkMail()).ok);
+  const e = emailBy("Quick update")!;
+  assert.equal(e.status, "review");
+  assert.throws(() => M.resolveEmail(e.id, { applicationId: ids.ramp, kind: "confirmation" }, "agent"), /only the user/);
+  assert.equal(app("ramp").stage, "found");
+  M.resolveEmail(e.id, { applicationId: ids.ramp, kind: "confirmation" }, "you");
+  assert.equal(app("ramp").stage, "applied");
+});
+
+test("dismissing an email clears its 'Read the email' and gives the follow-up back", async () => {
+  setMail((s) => {
+    const inbox = s.accts[0].boxes[0];
+    inbox.msgs.push({ id: s.nextId++, messageId: "s9@stripe", sender: "Stripe Recruiting <recruiting@stripe.com>", subject: "Other roles", date: hoursAgo(1), content: "About your application: would you also consider our Treasury team? Any thoughts?", flagged: false, junk: false, deleted: false, box: inbox });
+  });
+  assert.ok((await M.checkMail()).ok);
+  const e = emailBy("Other roles")!;
+  assert.equal(e.applicationId, ids["stripe-sfm"]);
+  assert.equal(app("stripe-sfm").nextAction, "Read the email from Stripe");
+  M.resolveEmail(e.id, { dismiss: true }, "agent");
+  assert.equal(app("stripe-sfm").nextAction, "Follow up");
+  assert.equal(emailBy("Other roles")!.applicationId, null);
+});
+
+test("settling an assessment that doesn't move the stage leaves 'Complete the assessment'", async () => {
+  setMail((s) => {
+    const inbox = s.accts[0].boxes[0];
+    inbox.msgs.push({ id: s.nextId++, messageId: "hr1@hackerrank", sender: "HackerRank <support@hackerrankforwork.com>", subject: "Stripe invites you to a HackerRank test for Strategic Finance Manager", date: hoursAgo(1), content: "Stripe has invited you to take a test for the Strategic Finance Manager role.", flagged: false, junk: false, deleted: false, box: inbox });
+  });
+  assert.ok((await M.checkMail()).ok);
+  const e = emailBy("Stripe invites you to a HackerRank test for Strategic Finance Manager")!;
+  assert.equal(e.kind, "assessment");
+  M.resolveEmail(e.id, { applicationId: ids["stripe-sfm"], kind: "assessment", summary: "HackerRank test, due in 5 days" }, "agent");
+  assert.equal(app("stripe-sfm").stage, "applied");
+  assert.equal(app("stripe-sfm").nextAction, "Complete the assessment");
+  assert.ok(D.db.select().from(D.schema.events).all().some((ev) => ev.applicationId === ids["stripe-sfm"] && ev.detail?.includes("HackerRank test, due in 5 days")));
+});
+
+test("'Wrong? Undo and look again' puts the application back where the email found it", () => {
+  const e = emailBy("Thank you for applying to Stripe")!;
+  assert.equal(e.movedFrom, "approved");
+  assert.equal(e.movedTo, "applied");
+  M.reopenEmail(e.id);
+  assert.equal(app("stripe-sfm").stage, "approved");
+  assert.equal(app("stripe-sfm").emailConfirmedAt, null);
+  assert.equal(emailBy("Thank you for applying to Stripe")!.status, "review");
+});
+
+test("mail an account downloads late, with an older date, is still read", async () => {
+  setMail((s) => {
+    const inbox = s.accts[1].boxes[0];
+    inbox.msgs.push({ id: s.nextId++, messageId: "late@visa", sender: "Visa <visa@myworkday.com>", subject: "Late arrival", date: hoursAgo(24 * 5), content: "Thank you for applying for the Payments Strategy Manager position at Visa.", flagged: false, junk: false, deleted: false, box: inbox });
+  });
+  assert.ok((await M.checkMail()).ok);
+  assert.ok(emailBy("Late arrival"));
 });

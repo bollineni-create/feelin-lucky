@@ -144,8 +144,10 @@ export function fakeMail(opts: FakeOptions & { accounts?: AcctSpec[]; state?: { 
   const mail = {
     running: () => opts.running ?? true,
     checkForNewMail: () => calls.push("check"),
+    backgroundActivityCount: () => 0,
     accounts: callable(() => accts.map(acctObj), {
       name: () => (denied(), accts.map((a) => a.name)),
+      whose: (q: Out) => () => accts.filter((a) => a.id === q.id).map(acctObj),
       byName: (n: string) => {
         const a = accts.find((x) => x.name === n);
         return a ? acctObj(a) : { name: () => { throw notFound(); }, enabled: () => { throw notFound(); } };

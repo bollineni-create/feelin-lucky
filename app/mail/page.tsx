@@ -209,7 +209,7 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
                         {e.fileError && !e.fileError.startsWith("gone:") ? <div className="small status-failed">{e.fileError}</div> : null}
                         <form action={reopenEmailAction.bind(null, e.id)}>
                           <button className="btn btn-sm btn-ghost" type="submit" style={{ padding: "2px 0", minHeight: 0, fontSize: 12, fontWeight: 400 }}>
-                            Wrong? Look again
+                            Wrong? Undo and look again
                           </button>
                         </form>
                       </td>

@@ -78,7 +78,7 @@ test("list stops at max_bodies and keeps the watermark at the last one read", ()
 });
 
 test("list reads only the accounts asked for", () => {
-  const msg = { sender: "x <x@greenhouse-mail.io>", subject: "s", date: day(10) };
+  const msg = { sender: "x <x@greenhouse-mail.io>", subject: "s", date: day(10), content: "body" };
   const { mail } = fakeMail({ accounts: [{ name: "Gmail", inbox: [{ ...msg, messageId: "g@x" }] }, { name: "Work", inbox: [{ ...msg, messageId: "w@x" }] }] });
   const out = loadBridge(mail).handle(mail, { ...base, cmd: "list", since: day(1).toISOString(), accounts: ["Gmail"] }, noShell);
   assert.deepEqual(out.messages.map((m: Out) => m.message_id), ["g@x"]);
@@ -179,4 +179,49 @@ test("run reports bad input and Mail's refusals with their number", () => {
   };
   const out = JSON.parse(loadBridge(denied).run([JSON.stringify({ cmd: "list", since: day(1).toISOString() })]));
   assert.deepEqual(out, { ok: false, error: "Not authorized to send Apple events to Mail.", number: -1743 });
+});
+
+test("list leaves out a message whose text Mail can't give yet, so the next check reads it", () => {
+  const { mail } = fakeMail({ accounts: [{ name: "Gmail", inbox: [{ messageId: "e@x", sender: "x <x@greenhouse-mail.io>", subject: "s", date: day(10), content: "  " }] }] });
+  const out = loadBridge(mail).handle(mail, { ...base, cmd: "list", since: day(1).toISOString() }, noShell);
+  assert.deepEqual(out.messages, []);
+  assert.equal(out.unread, 1);
+});
+
+test("list gives each message its account's id; two accounts can share a name", () => {
+  const msg = { sender: "x <x@greenhouse-mail.io>", subject: "s", date: day(10), content: "body" };
+  const { mail, accts } = fakeMail({ accounts: [{ name: "Google", inbox: [{ ...msg, messageId: "a@x" }] }, { name: "Google", inbox: [{ ...msg, messageId: "b@x" }] }] });
+  accts[1].id = "uuid-Google-2";
+  const out = loadBridge(mail).handle(mail, { ...base, cmd: "list", since: day(1).toISOString() }, noShell);
+  assert.deepEqual(out.messages.map((m: Out) => [m.message_id, m.account_id]), [["a@x", "uuid-Google"], ["b@x", "uuid-Google-2"]]);
+  // Filing the second one makes and uses the mailbox in the second account, not the first.
+  const b = accts[1].boxes[0].msgs[0];
+  const filed = loadBridge(mail).handle(mail, { cmd: "file", mailbox: "Lodestar", actions: [{ message_id: "b@x", mail_id: b.id, account_id: "uuid-Google-2", account: "Google", where: "inbox", move: true }] }, noShell);
+  assert.equal(filed.results[0].moved_to, "Lodestar");
+  assert.equal(accts[0].boxes.some((x) => x.name === "Lodestar"), false);
+  assert.equal(accts[1].boxes.find((x) => x.name === "Lodestar")!.msgs[0].messageId, "b@x");
+});
+
+test("file rescues an interview request from Junk to the inbox, unjunked and flagged", () => {
+  const { mail, accts } = fakeMail({ accounts: [{ name: "iCloud", junk: [{ messageId: "i@x", junk: true }] }] });
+  const m = accts[0].boxes.find((b) => b.name === "Junk")!.msgs[0];
+  const out = loadBridge(mail).handle(mail, { cmd: "file", mailbox: "Lodestar", actions: [act(m, { rescue: true, flag: true })] }, noShell);
+  assert.equal(out.results[0].rescued, true);
+  assert.equal(typeof out.results[0].mail_id, "number");
+  assert.equal(m.box!.name, "INBOX");
+  assert.equal(m.junk, false);
+  assert.equal(m.flagged, true);
+});
+
+test("file calls a message gone only when Mail says it isn't there", () => {
+  const { mail, accts } = fakeMail({ accounts: [{ name: "iCloud", inbox: [{ messageId: "a@x" }] }] });
+  const m = accts[0].boxes[0].msgs[0];
+  const busy = Object.assign(new Error("AppleEvent timed out. (-1712)"), { errorNumber: -1712 });
+  const box = mail.inbox.mailboxes()[0] as Out;
+  const real = mail.inbox.mailboxes;
+  mail.inbox.mailboxes = () => [{ ...box, account: box.account, messages: { ...box.messages, byId: () => { throw busy; } } }];
+  const out = loadBridge(mail).handle(mail, { cmd: "file", mailbox: "Lodestar", actions: [act(m, { flag: true })] }, noShell);
+  assert.equal(out.results[0].gone, undefined);
+  assert.match(out.results[0].error, /timed out/);
+  mail.inbox.mailboxes = real;
 });

@@ -223,3 +223,31 @@ test("real-world: account mail isn't kept, and companies are read from vendor ad
   assert.equal(m("Accenture Careers <accenture@myworkday.com>", "It's great that you're interested", "Hi").applicationId, 12);
   assert.equal(m("Plaid <talent@plaid.com>", "Hello", "Hi").applicationId, null);
 });
+
+// ---------- Regressions found in review ----------
+
+test("review: a reschedule or offer paperwork isn't a rejection", () => {
+  assert.equal(classify("Interview update", "Unfortunately our hiring manager is unable to proceed with Tuesday's interview. Could you share your availability for Thursday?").kind, "interview");
+  assert.equal(classify("Today's interview", "We regret to inform you that your interviewer is out sick today. Please share your availability so we can reschedule.").kind, "interview");
+  assert.equal(classify("Your offer", "We are thrilled to extend you an offer! We cannot proceed with onboarding until we receive your signed offer letter.").kind, "offer");
+  assert.deepEqual(classify("Update", "Thank you for taking the time to interview with us. Unfortunately, we have decided to move forward with other candidates."), { kind: "rejection", confident: true });
+});
+
+test("review: a company named only in another company's email doesn't match", () => {
+  const list: Candidate[] = [{ id: 20, stage: "found", company: "Figma", title: "Product Manager", domains: [] }];
+  const m = matchEmail({ sender: sender("Notion <no-reply@ashbyhq.com>"), subject: "Thanks for applying to Notion", body: "We received your application for Product Manager. Teams at Figma and Pixar use Notion every day." }, list);
+  assert.equal(m.applicationId, null);
+  assert.deepEqual(m.candidateIds, [20]);
+});
+
+test("review: a two-word title only matches as written", () => {
+  const list: Candidate[] = [{ id: 21, stage: "applied", company: "Figma", title: "Product Manager", domains: [] }, { id: 22, stage: "applied", company: "Figma", title: "Data Analyst", domains: [] }];
+  const m = matchEmail({ sender: sender("Figma <no-reply@greenhouse-mail.io>"), subject: "Figma update", body: "Our manager for the product team will be in touch." }, list);
+  assert.equal(m.applicationId, null);
+});
+
+test("review: a recruiter's own follow-up asking for a time is kept", () => {
+  const e = { sender: sender("Jane <jane@visa.com>"), subject: "Next steps", body: "Thanks for your time today. We'd like to bring you back for a final round with the team. What's your availability next week?" };
+  const list: Candidate[] = [{ id: 30, stage: "screening", company: "Visa", title: "Payments Strategy Manager", domains: ["visa.com"] }];
+  assert.equal(isJobEmail(e, matchEmail(e, list)), true);
+});

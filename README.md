@@ -148,7 +148,7 @@ LinkedIn's user agreement restricts automated use of the site, and frequent auto
 
 Employers answer by email: a confirmation that the application arrived, then a rejection, a request to talk, an assessment or an offer. Lodestar reads those from the Mail app on your Mac, whatever accounts it has (Gmail, iCloud, Outlook), so the pipeline stays current without signing in to each portal.
 
-**Turn it on.** Open **Mail** in Lodestar and click **Connect Apple Mail**. macOS asks whether **node** (the program Lodestar's server runs as) may control Mail: choose **OK**. Lodestar then reads the last 30 days of your inbox and Junk, and after that checks every 15 minutes while Mail is open. Each morning's run checks too, opening Mail in the background if it's closed.
+**Turn it on.** Open **Mail** in Lodestar and click **Connect Apple Mail**. macOS asks whether **node** (the program Lodestar's server runs as) may control Mail: choose **OK**. Lodestar then reads the last 30 days of your inbox and Junk, and after that checks every 15 minutes while Mail is open, each time looking back over the last 10 days so mail an account downloads late isn't missed. Each morning's run checks too, opening Mail in the background if it's closed.
 
 **What happens to each email.**
 
@@ -157,12 +157,12 @@ Employers answer by email: a confirmation that the application arrived, then a r
 | Confirmation ("we received your application") | Marked **Email ✓** on the application. If it was still found or approved (you applied yourself, or a submit wasn't recorded), it moves to Applied | Moved to the **Lodestar** mailbox |
 | Rejection | Closed as rejected | Moved to **Lodestar** |
 | Status update ("under review") | Noted on the application | Moved to **Lodestar** |
-| Interview request, assessment, offer | Noted, with the next action "Read the email from …"; the morning run (or you) moves the stage forward | Flagged, left in the inbox |
-| One Lodestar can't tie to a single application | Waits under **Needs a look** on the Mail page, with the applications it could be | Left alone |
+| Interview request, assessment, offer | Noted, with the next action "Read the email from …"; the morning run (or you) moves the stage forward | Flagged, left in the inbox (moved back to the inbox if it landed in Junk) |
+| One Lodestar can't tie to a single application, matched by company alone, or a rejection found in Junk | Waits under **Needs a look** on the Mail page, with the applications it could be | Left where it is (moved back to the inbox if it landed in Junk) |
 
 The Lodestar mailbox is created inside each Mail account (not "On My Mac"), so it shows on your phone too, and unread mail stays unread. On Gmail it's a label: a scripted move adds it but usually leaves the email in the inbox as well. Exchange accounts don't reliably take a mailbox made by a script, so there Lodestar only flags. The mailbox name, filing, flagging, Junk, notifications and which accounts to read are all settings on the Mail page.
 
-**How it tells which job an email is about.** By the company (the sender, its domain, the name in the subject) and the job title. A title match is enough on its own; the company alone is enough only when you have exactly one application in flight there. Confirmations, rejections and status updates it's sure of are recorded straight away; anything else goes to the agent's next run, which reads it, picks the application and moves the stage, or to you on the Mail page.
+**How it tells which job an email is about.** By the company, named by the sender (its name, its domain, a Workday or iCIMS address) or in the subject, and the job title. Confirmations, rejections and status updates are recorded straight away only when both match and the email asks for nothing (a "we can't make Tuesday's interview, when are you free?" isn't a rejection). When only the company matches, or the email asks for something, it waits for review with the likely application suggested: the agent's next run settles it, or you do on the Mail page. A job still found or approved is only ever marked applied by the app's own title match or by you, never by the agent. **Wrong? Look again** on the Mail page puts an email back up for review and undoes what it did to the application, if nothing has happened since.
 
 **What it keeps.** Only emails about your job search: from applicant tracking systems (Greenhouse, Workday, Lever, Ashby, iCIMS and the like), job boards' "your application was sent" notices, and recruiters or companies you've applied to writing about an application. Bank, shopping and newsletter mail from the same companies ("your credit card application") isn't kept. Lodestar never sends, replies to, forwards or deletes an email; it only moves and flags the job emails as above.
 
