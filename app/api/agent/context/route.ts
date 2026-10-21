@@ -140,6 +140,14 @@ export const GET = agentRoute(async (req) => {
       .where(inArray(companies.priority, ["high", "normal"]))
       .orderBy(asc(companies.name))
       .all(),
+    // Watchlist companies whose careers site the last scan couldn't open. The job search looks for their jobs on
+    // LinkedIn instead, since the scan run doesn't search LinkedIn.
+    companies_with_scan_note: db
+      .select({ company_id: companies.id, name: companies.name, priority: companies.priority, scan_note: companies.scanNote })
+      .from(companies)
+      .where(and(inArray(companies.priority, ["high", "normal"]), isNotNull(companies.scanNote)))
+      .orderBy(asc(companies.name))
+      .all(),
     approved_to_submit: profile.confirmed ? approved : [],
     auto_apply: {
       enabled: criteria.autoApply && profile.confirmed,
@@ -148,7 +156,7 @@ export const GET = agentRoute(async (req) => {
       applied_today: autoAppliedToday(),
       sources: criteria.autoApplySources,
     },
-    // Strong matches the agent may submit without an approval (auto-apply on). Re-fetch after Phase C: newly prepared jobs land here.
+    // Strong matches the agent may submit without an approval (auto-apply on). Re-fetch after Phase D (prepare): newly prepared jobs land here.
     auto_apply_to_submit: autoApply,
     submit_blocked_reason: profile.confirmed
       ? null
@@ -168,7 +176,7 @@ export const GET = agentRoute(async (req) => {
       fit_reasons: a.job.fitReasons,
     })),
     skip_feedback: skipFeedback,
-    // Email tracking (Apple Mail): emails the app couldn't place or wasn't sure of wait in to_review for Phase D.
+    // Email tracking (Apple Mail): emails the app couldn't place or wasn't sure of wait in to_review for Phase E (track).
     mail: mailContext(),
   };
 });

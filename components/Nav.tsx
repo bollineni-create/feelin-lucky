@@ -20,7 +20,7 @@ export function Header({ queueCount, mailCount, lastScan, owner }: { queueCount:
       ? "Red daily, others every 3 days · careers sites + LinkedIn"
       : path.startsWith("/mail")
         ? "Checks Apple Mail every 15 minutes while Mail is open"
-        : "Agent scans weekdays · 7:00 AM PT";
+        : "Scan and job search weekdays · 7:00 AM PT";
 
   return (
     <header className="topbar">

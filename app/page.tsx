@@ -7,7 +7,7 @@ import { LOG_TAIL_LINES, progressLine, runProgress } from "@/lib/run-progress";
 import { RunButton } from "@/components/RunButton";
 import { getMailSettings } from "@/lib/mail";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { runNow, stopRun } from "./actions";
+import { runScanNow, runSearchNow, stopRun } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -40,22 +40,39 @@ function nextText(a: AppWithJob) {
   return null;
 }
 
-/** The find phase hasn't run yet: the run is still in a phase that comes before it (e.g. submit). */
-function scanNotStarted(r: { status: string; phase: string; currentPhase: string | null }) {
-  if (r.status !== "running" || !r.currentPhase) return false;
-  const phases = r.phase.split(",").map((p) => p.trim());
-  const find = phases.indexOf("find");
-  const now = phases.indexOf(r.currentPhase);
-  return find >= 0 && now >= 0 && now < find;
+type RunRow = { status: string; phase: string; currentPhase: string | null };
+
+const phasesOf = (r: RunRow) => r.phase.split(",").map((p) => p.trim());
+// Runs from before the scan and the job search were split have a "find" phase that did both.
+const scans = (r: RunRow) => phasesOf(r).some((p) => p === "scan" || p === "find");
+const searches = (r: RunRow) => phasesOf(r).some((p) => p === "search" || p === "find");
+
+/** What kind of run this is, from the phases it was started with. */
+function runKind(r: RunRow) {
+  if (scans(r) && searches(r)) return "Scan and job search";
+  if (scans(r)) return "Watchlist scan";
+  if (searches(r)) return "Job search";
+  return r.phase === "submit" ? "Submit" : r.phase;
 }
 
-function activityText(a: ReturnType<typeof runActivity>, r: { status: string; phase: string; currentPhase: string | null }) {
-  if (!a.companies_scanned && !a.jobs_found && scanNotStarted(r)) {
-    return `Scanning starts after ${r.currentPhase}; nothing to count yet`;
+/** The scan or search phase hasn't run yet: the run is still in a phase that comes before it (e.g. submit). */
+function findingNotStarted(r: RunRow) {
+  if (r.status !== "running" || !r.currentPhase) return false;
+  const phases = phasesOf(r);
+  const first = phases.findIndex((p) => p === "scan" || p === "search" || p === "find");
+  const now = phases.indexOf(r.currentPhase);
+  return first >= 0 && now >= 0 && now < first;
+}
+
+function activityText(a: ReturnType<typeof runActivity>, r: RunRow) {
+  if (!a.companies_scanned && !a.jobs_found && findingNotStarted(r)) {
+    return `${scans(r) ? "Scanning" : "Searching"} starts after ${r.currentPhase}; nothing to count yet`;
   }
   const jobs = a.jobs_found ? `${a.jobs_found} new jobs (${a.jobs_found_careers} careers, ${a.jobs_found_linkedin} LinkedIn)` : "no new jobs";
   const lowFit = a.jobs_closed_low_fit ? ` · ${a.jobs_closed_low_fit} closed as low fit` : "";
-  return `Recorded: ${a.companies_scanned} companies scanned · ${jobs}${lowFit}`;
+  // A job search doesn't scan the watchlist, so a count of companies scanned would only read as a failure.
+  const companies = scans(r) || a.companies_scanned ? `${a.companies_scanned} companies scanned · ` : "";
+  return `Recorded: ${companies}${jobs}${lowFit}`;
 }
 
 function whenLabel(iso: string) {
@@ -133,7 +150,10 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
           {running ? (
             <RunButton action={stopRun} label={`Stop run #${running.id}`} pendingLabel="Stopping…" doneMessage="Stopped." />
           ) : (
-            <RunButton action={runNow} label="Run scan now" pendingLabel="Starting…" doneMessage="Started. Watch Chrome; the run log below updates as it goes." />
+            <>
+              <RunButton action={runScanNow} label="Scan watchlist now" pendingLabel="Starting…" doneMessage="Scan started. Watch Chrome; the run log below updates as it goes." />
+              <RunButton action={runSearchNow} label="Search jobs now" pendingLabel="Starting…" doneMessage="Job search started. Watch Chrome; the run log below updates as it goes." />
+            </>
           )}
         </div>
       </div>
@@ -235,14 +255,19 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
         </div>
         <aside className="side">
           <div className="panel-dark">
-            <h2>How a daily run works</h2>
+            <h2>How the daily runs work</h2>
+            <p className="fine">Each weekday the agent does two runs, one after the other.</p>
             <ol>
-              <li>Submits the applications you approved, and nothing else</li>
-              <li>Scans each watchlist company&apos;s careers page and your LinkedIn Jobs list</li>
-              <li>Scores every new posting against your criteria and drops weak fits</li>
-              <li>Drafts a tailored resume and cover letter for each strong match, then waits for your approval</li>
-              <li>Reads Apple Mail for confirmations, rejections and interview requests on everything in flight, and checks LinkedIn</li>
+              <li>
+                <b>Watchlist scan</b> checks the careers page of each watchlist company that&apos;s due, then reads Apple Mail for confirmations, rejections and interview requests on everything in flight, and checks LinkedIn and portals where email is silent
+              </li>
+              <li>
+                <b>Job search</b> reads your LinkedIn Jobs list and runs the LinkedIn and broad searches
+              </li>
             </ol>
+            <p className="fine" style={{ marginTop: 12 }}>
+              Both first submit the applications you approved, and nothing else. Then they score every new posting against your criteria, drop weak fits, and draft a tailored resume and cover letter for each strong match, which waits for your approval.
+            </p>
             <p className="fine" style={{ marginTop: 12 }}>
               Nothing is submitted, no account is created and no password is entered without you.
             </p>
@@ -255,7 +280,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
           <div className="panel">
             <h2>Run log</h2>
             {runs.length === 0 ? (
-              <p className="small muted">No runs yet. Use Run scan now, or install the weekday schedule.</p>
+              <p className="small muted">No runs yet. Use Scan watchlist now or Search jobs now, or install the weekday schedule.</p>
             ) : (
               <table className="runs">
                 <thead>
@@ -280,7 +305,10 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                       <tr key={r.id}>
                         <td className="mono">{fmtDateTime(r.startedAt)}</td>
                         <td>
-                          <span className={`status-${r.status}`}>{r.status}</span> <span className="muted">· {r.phase}</span>
+                          <span className={`status-${r.status}`}>{r.status}</span>{" "}
+                          <span className="muted" title={`Phases: ${r.phase}`}>
+                            · {runKind(r)}
+                          </span>
                           {isRunning && r.currentPhase ? <span className="muted"> · in {r.currentPhase}</span> : null}
                           {r.counts ? (
                             <div className="muted">
