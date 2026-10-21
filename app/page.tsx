@@ -6,7 +6,7 @@ import { ago, fmtDate, fmtDateTime, modeLabel, shortCity, sourceLabel } from "@/
 import { LOG_TAIL_LINES, progressLine, runProgress } from "@/lib/run-progress";
 import { RunButton } from "@/components/RunButton";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { runNow, stopRun } from "./actions";
+import { runNow, stopRun, submitApprovedNow } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +88,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   const runs = latestRuns(6);
 
   const applied = all.filter((a) => a.stage === "applied");
+  const approved = all.filter((a) => a.stage === "approved");
   const kpis = [
     { label: "Awaiting your approval", value: queue.length, sub: "Found in today’s scan", href: "/queue" },
     { label: "Applied", value: applied.length, sub: applied.some((a) => a.nextAction === "Follow up") ? "Some due a follow-up" : "No response yet" },
@@ -125,7 +126,12 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
           {running ? (
             <RunButton action={stopRun} label={`Stop run #${running.id}`} pendingLabel="Stopping…" doneMessage="Stopped." />
           ) : (
-            <RunButton action={runNow} label="Run scan now" pendingLabel="Starting…" doneMessage="Started. Watch Chrome; the run log below updates as it goes." />
+            <>
+              {approved.length ? (
+                <RunButton action={submitApprovedNow} label={`Apply to ${approved.length} approved now`} pendingLabel="Starting…" doneMessage="Applying. Watch Chrome; the run log below updates as it goes." />
+              ) : null}
+              <RunButton action={runNow} label="Run scan now" pendingLabel="Starting…" doneMessage="Started. Watch Chrome; the run log below updates as it goes." />
+            </>
           )}
         </div>
       </div>

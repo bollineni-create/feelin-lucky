@@ -10,7 +10,7 @@ A local app that tracks the search, and a daily Claude Code agent that finds job
 ## What it does
 
 - **A pipeline you can read at a glance.** The Pipeline board shows every application by stage, from found to offer, with a feed of what changed and a log of every agent run.
-- **Today's matches, ready to review.** Each morning the Queue holds the jobs the agent found and scored, each with a tailored resume or CV, a cover letter and answers to the screening questions. Approve one and it goes out on the next run; skip one and tell the agent why.
+- **Today's matches, ready to review.** Each morning the Queue holds the jobs the agent found and scored, each with a tailored resume or CV, a cover letter and answers to the screening questions. Approve one and it goes out on the next run, or right away with **Apply to approved now**; skip one and tell the agent why.
 - **A company watchlist.** 134 companies come seeded, by category and priority. The agent scans the ones that are due on their careers sites first, then runs the broad searches, including LinkedIn.
 - **Fit scores, not noise.** Every job gets a fit score and reasons. Anything under the threshold (70, or 60 for high-priority companies) is closed on arrival and never scored again.
 - **Materials made for each job.** The agent writes Markdown from your own resume and CV text; the app renders it to PDF and Word in `data/applications/<job-id>/`.
@@ -54,7 +54,7 @@ Open **Settings** and:
 | Screen | Path | For |
 | --- | --- | --- |
 | Pipeline | `/` | Every application by stage, the update feed and the run log. **Run now** starts a run. |
-| Today's matches | `/queue` | Approve or skip what the agent prepared. **Submit approved now** sends them right away. |
+| Today's matches | `/queue` | Approve or skip what the agent prepared. **Apply to approved now** sends the approved ones right away. |
 | Company watchlist | `/companies` | Companies by category, their careers sites and scan history, and the broad searches |
 | Application | `/jobs/[id]` | One job: fit, materials, the posting, tracking and status history |
 | Settings | `/settings` | Profile and search criteria, including auto-apply |
@@ -120,7 +120,7 @@ scripts/install-launchd.sh           # app always on + daily run weekdays 7:00 A
 scripts/install-launchd.sh --remove
 ```
 
-**Run now** (Pipeline) and **Submit approved now** (Queue) start the same script from the app.
+**Run now** (Pipeline) and **Apply to approved now** (Queue, and the Pipeline when something is approved) start the same script from the app. Applying runs only the submit phase: it sends what you approved, and auto-apply matches if auto-apply is on, without scanning.
 
 ## Auto-apply
 

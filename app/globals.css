@@ -247,6 +247,7 @@ h2.section { font-size: 18px; font-weight: 600; }
 .banner { padding: 12px 16px; border-radius: var(--r); background: var(--amber-tint); color: var(--amber-deep); border: 1px solid var(--banner-border); }
 .banner.ok { background: var(--accent-tint); color: var(--accent-deep); border-color: var(--banner-ok-border); }
 .banner a { color: inherit; }
+.apply-now { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
 .qactions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--divider); }
 .qactions .done-text { font-weight: 500; }
 .qactions details { position: relative; }
