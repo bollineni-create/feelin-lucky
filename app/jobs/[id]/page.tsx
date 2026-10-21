@@ -40,6 +40,11 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
           <div className="facts btn-row small secondary" style={{ marginTop: 6 }}>
             <span className="tag accent">{STAGE_LABEL[a.stage]}</span>
             <span className="tag">{sourceLabel(j.source)}</span>
+            {j.lookupId ? (
+              <Link className="tag amber" href="/#lookups" title="Found for something you asked the agent to look for; kept whatever it scored">
+                You asked for this
+              </Link>
+            ) : null}
             {a.atsType ? <span className="tag">{a.atsType}</span> : null}
             <span>{j.location ?? "Location n/a"}</span>
             {j.workMode ? <span>{modeLabel(j.workMode)}</span> : null}

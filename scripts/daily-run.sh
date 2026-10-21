@@ -342,14 +342,15 @@ RUN_JSON="$(agent/api.sh GET "/api/agent/runs/$RUN_ID" 2>/dev/null)"
 STATUS="$(echo "$RUN_JSON" | json_field "['run']['status']")"
 SCANNED="$(echo "$RUN_JSON" | json_field "['activity']['companies_scanned']")"
 FOUND="$(echo "$RUN_JSON" | json_field "['activity']['jobs_found']")"
-log "Recorded by the app: ${SCANNED:-?} companies scanned, ${FOUND:-?} new jobs"
+LOOKUPS="$(echo "$RUN_JSON" | json_field "['activity']['lookups_done']")"
+log "Recorded by the app: ${SCANNED:-?} companies scanned, ${LOOKUPS:-?} lookups done, ${FOUND:-?} new jobs"
 if [ "$STATUS" = "running" ]; then
   KEPT="What it recorded before that (${SCANNED:-0} companies scanned, ${FOUND:-0} new jobs) is kept; the next run picks up the rest."
   if [ "$CODE" -eq 143 ]; then fail_run "Stopped at the ${MAX_MINUTES}-minute limit (JOBHUNT_MAX_MINUTES) before the agent finished. $KEPT"
   else fail_run "The agent exited (code $CODE) without closing the run. $KEPT See $LOG"; fi
-elif [[ ",$PHASE," == *",find,"* && "$STATUS" = "ok" && "${SCANNED:-0}" = "0" && "${FOUND:-0}" = "0" ]]; then
-  # A find phase that marked no company scanned and posted no job didn't search, whatever the agent reported.
-  fail_run "Find phase recorded no scanned companies and no jobs; the agent didn't search. See $TRANSCRIPT"
+elif [[ ",$PHASE," == *",find,"* && "$STATUS" = "ok" && "${SCANNED:-0}" = "0" && "${FOUND:-0}" = "0" && "${LOOKUPS:-0}" = "0" ]]; then
+  # A find phase that marked no company scanned, settled no lookup and posted no job didn't search, whatever the agent reported.
+  fail_run "Find phase recorded no scanned companies, no lookups and no jobs; the agent didn't search. See $TRANSCRIPT"
 else
   log "Run #$RUN_ID finished: $STATUS (exit $CODE)"
 fi

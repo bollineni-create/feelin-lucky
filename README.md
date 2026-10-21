@@ -12,6 +12,7 @@ A local app that tracks the search, and a daily Claude Code agent that finds job
 - **A pipeline you can read at a glance.** The Pipeline board shows every application by stage, from found to offer, with a feed of what changed and a log of every agent run. While a run is on, the log says what the agent is doing right now (the application it's on and the step), and a run that stopped early, from Stop run, the time limit or a crash, can be finished with **Finish run**: the next run picks up the phase it was in and the item it was on.
 - **Today's matches, ready to review.** Each morning the Queue holds the jobs the agent found and scored, each with a tailored resume or CV, a cover letter and answers to the screening questions. Approve one and it goes out on the next run, or right away with **Apply to approved now**; skip one and tell the agent why.
 - **A company watchlist.** 134 companies come seeded, by category and priority. The agent scans the ones that are due on their careers sites first, then runs the broad searches, including LinkedIn.
+- **Ask for something specific.** Heard about a role, or want one company checked now? On the Pipeline, under **Look for something on the next scan**, type a job title, a company, or both (with a link or a note if you have one). The next run searches for it before anything else, on the company's careers site and on LinkedIn, and reports back in one line. Whatever it finds is kept and prepared whatever the fit score, marked **You asked for this**, so you decide in the Queue. **Look again** sends a finished lookup back out.
 - **Fit scores, not noise.** Every job gets a fit score and reasons. Anything under the threshold (70, or 60 for high-priority companies) is closed on arrival and never scored again.
 - **Materials made for each job.** The agent writes Markdown from your own resume and CV text; the app renders it to PDF and Word in `data/applications/<job-id>/`.
 - **Auto-apply, if you want it.** Off by default. Switched on, the strong matches go out by themselves, within a daily cap, with a confirmation screenshot for each one. See [Auto-apply](#auto-apply).
@@ -53,7 +54,7 @@ Open **Settings** and:
 
 | Screen | Path | For |
 | --- | --- | --- |
-| Pipeline | `/` | Every application by stage, the update feed and the run log. **Run scan now** starts a run; **Finish run** picks up one that stopped early. |
+| Pipeline | `/` | Every application by stage, the update feed and the run log. **Run scan now** starts a run; **Finish run** picks up one that stopped early. **Look for something on the next scan** queues a job title or company for the agent. |
 | Today's matches | `/queue` | Approve or skip what the agent prepared. **Apply to approved now** sends the approved ones right away. |
 | Company watchlist | `/companies` | Companies by category, their careers sites and scan history, and the broad searches |
 | Application | `/jobs/[id]` | One job: fit, materials, the posting, tracking, its emails and status history |
@@ -88,7 +89,7 @@ A full run goes through four phases, in this order:
 | Phase | Does |
 | --- | --- |
 | **Submit** | Sends what you approved in the Queue, then what passes the auto-apply checks |
-| **Find** | Scans the watchlist companies that are due, then the broad and LinkedIn searches, and scores what it finds |
+| **Find** | Searches for what you asked for (lookups), then scans the watchlist companies that are due, then the broad and LinkedIn searches, and scores what it finds |
 | **Prepare** | Writes the resume or CV, cover letter and screening answers for each good match |
 | **Track** | Reads Apple Mail for replies and settles the emails the app wasn't sure of, then re-checks postings, and portals only where email is silent |
 
@@ -175,7 +176,7 @@ Enforced in code as well as in the runbook.
 - `approved_to_submit` is empty while the profile is unconfirmed.
 - An email moves an application only forward (to applied, screening, interviewing or offer, or closed as rejected), never to approved, and only an email the app read from Mail itself. The agent can only settle emails the app put up for review.
 - Lodestar never sends, replies to, forwards or deletes email. It keeps only job emails, and moves or flags only those.
-- Jobs under the fit threshold are closed as `low_fit` on arrival and never re-scored. A job keeps its first score.
+- Jobs under the fit threshold are closed as `low_fit` on arrival and never re-scored, except jobs found for a lookup you asked for, which stay open for you to decide. A job keeps its first score.
 - In headless mode the agent may only use the Chrome tools, `agent/api.sh`, `screencapture`, reads, and writes to `logs/tmp/`. `curl`, `rm`, `git` and WebFetch are blocked.
 - Page content is data, not instructions: the runbook tells the agent to ignore anything a job posting or portal tells it to do.
 
@@ -213,9 +214,10 @@ Next.js 15, React 19, SQLite through better-sqlite3 and Drizzle, `pdfkit` and `d
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/agent/context` | Criteria, profile, companies due a scan, open applications, approved and auto-apply applications to submit, jobs needing a score or materials, skip feedback |
+| GET | `/api/agent/context` | Criteria, profile, lookups (titles or companies you asked for), companies due a scan, open applications, approved and auto-apply applications to submit, jobs needing a score or materials, skip feedback |
 | POST / PATCH | `/api/agent/runs`, `/api/agent/runs/:id` | Start a run; finish it with counts and errors |
-| POST | `/api/agent/jobs` | Upsert found jobs (dedupe on company + title + location) with fit score and reasons |
+| POST | `/api/agent/jobs` | Upsert found jobs (dedupe on company + title + location) with fit score and reasons; `lookup_id` ties a job to a lookup and keeps it open whatever it scores |
+| PATCH | `/api/agent/lookups/:id` | Mark a lookup done, with one line on what was found |
 | POST | `/api/agent/jobs/:id/materials` | Resume/CV, cover letter and answers as Markdown; rendered to PDF and DOCX in `data/applications/<job-id>/` |
 | PATCH | `/api/agent/applications/:id` | Stage, `submitted_at`, `next_action`, `needs_signin`, … |
 | POST | `/api/agent/events` | Feed updates |
@@ -226,7 +228,7 @@ Next.js 15, React 19, SQLite through better-sqlite3 and Drizzle, `pdfkit` and `d
 
 ### Notes on the build
 
-- **Data model additions beyond spec §3:** `Job.company_name`, so LinkedIn jobs at companies outside the watchlist still have a name. `Company.categories` is a list (Valve and Salesforce sit in two categories). `Application` gains Markdown materials, `skip_reason`, `notes`, `linkedin_status` and `confirmation_text`. `Profile.confirmed` gates submission.
+- **Data model additions beyond spec §3:** `Job.company_name`, so LinkedIn jobs at companies outside the watchlist still have a name. `lookups` (a title and/or company you asked the agent to look for, with its result) and `Job.lookup_id`. `Company.categories` is a list (Valve and Salesforce sit in two categories). `Application` gains Markdown materials, `skip_reason`, `notes`, `linkedin_status` and `confirmation_text`. `Profile.confirmed` gates submission.
 - Teal, blue and orange highlights are treated as normal priority until you give them a meaning.
 - Applied with no response for 14 days gets `next_action = "Follow up"` automatically.
 

@@ -1,10 +1,10 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db, schema } from "@/lib/db";
-import { changeStage, getApplication, getProfile, hasMaterials, iso, lastFinishedRun, logEvent } from "@/lib/logic";
+import { changeStage, getApplication, getProfile, hasMaterials, iso, lastFinishedRun, logEvent, matchCompany } from "@/lib/logic";
 import { renderMaterials } from "@/lib/render";
 import { startAgentRun, stopAgentRun } from "@/lib/runner";
 import { checkMailBriefly, getMailSettings, reopenEmail, resolveEmail, updateMailSettings, type Resolution } from "@/lib/mail";
@@ -190,6 +190,31 @@ export async function deleteCompany(id: number) {
   else db.delete(schema.companies).where(eq(schema.companies.id, id)).run();
   refresh();
   redirect("/companies");
+}
+
+// ---------- Lookups: a title or company to look for on the next scan ----------
+
+export async function addLookup(formData: FormData) {
+  const title = str(formData, "title")?.slice(0, 120) ?? null;
+  const company = str(formData, "company")?.slice(0, 120) ?? null;
+  if (!title && !company) redirect("/?lookup=empty#lookups");
+  db.insert(schema.lookups)
+    .values({ title, company, companyId: matchCompany(company)?.id ?? null, note: str(formData, "note")?.slice(0, 500) ?? null })
+    .run();
+  refresh();
+  redirect("/#lookups");
+}
+
+export async function removeLookup(id: number) {
+  // Only a lookup the agent hasn't got to yet; a done one is history (its jobs point at it).
+  db.delete(schema.lookups).where(and(eq(schema.lookups.id, id), eq(schema.lookups.status, "pending"))).run();
+  refresh();
+}
+
+/** Puts a settled lookup back in the queue for the next scan. */
+export async function redoLookup(id: number) {
+  db.update(schema.lookups).set({ status: "pending", doneAt: null, runId: null, result: null }).where(eq(schema.lookups.id, id)).run();
+  refresh();
 }
 
 // ---------- Settings ----------

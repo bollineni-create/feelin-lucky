@@ -1,11 +1,11 @@
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/lib/db";
-import { agentRoute, parseBody } from "@/lib/agent-auth";
+import { ApiError, agentRoute, parseBody } from "@/lib/agent-auth";
 import { dedupeKey } from "@/lib/dedupe";
 import { changeStage, logEvent, thresholdFor } from "@/lib/logic";
 
-const { jobs, applications, companies } = schema;
+const { jobs, applications, companies, lookups } = schema;
 
 const JobIn = z.object({
   company: z.string().min(1),
@@ -22,6 +22,8 @@ const JobIn = z.object({
   fit_score: z.number().int().min(0).max(100).nullish(),
   fit_reasons: z.array(z.string()).max(5).nullish(),
   linkedin_status: z.string().nullish(),
+  // The lookup (from the context's `lookups`) this job was found for. Such a job is never closed as low fit.
+  lookup_id: z.number().int().nullish(),
 });
 
 const Body = z.object({ run_id: z.number().int().optional(), jobs: z.array(JobIn).min(1).max(200) });
@@ -34,6 +36,8 @@ export const POST = agentRoute(async (req) => {
 
   for (const j of body.jobs) {
     const key = dedupeKey(j.company, j.title, j.location);
+    const lookup = j.lookup_id ? db.select().from(lookups).where(eq(lookups.id, j.lookup_id)).get() : undefined;
+    if (j.lookup_id && !lookup) throw new ApiError(400, `lookup ${j.lookup_id} not found`);
     const company =
       (j.company_id ? db.select().from(companies).where(eq(companies.id, j.company_id)).get() : undefined) ??
       db.select().from(companies).where(sql`lower(${companies.name}) = lower(${j.company})`).get();
@@ -60,6 +64,7 @@ export const POST = agentRoute(async (req) => {
           description: j.description ?? null,
           fitScore: j.fit_score ?? null,
           fitReasons: j.fit_reasons ?? null,
+          lookupId: lookup?.id ?? null,
           dedupeKey: key,
         })
         .returning()
@@ -78,6 +83,7 @@ export const POST = agentRoute(async (req) => {
       if (!existing.postedAt && j.posted_at) patch.postedAt = j.posted_at;
       if (!existing.description && j.description) patch.description = j.description;
       if (!existing.companyId && company) patch.companyId = company.id;
+      if (!existing.lookupId && lookup) patch.lookupId = lookup.id;
       if (existing.fitScore == null && j.fit_score != null) {
         patch.fitScore = j.fit_score;
         patch.fitReasons = j.fit_reasons ?? null;
@@ -99,9 +105,17 @@ export const POST = agentRoute(async (req) => {
     const job = db.select().from(jobs).where(eq(jobs.id, jobId)).get()!;
     let app = db.select().from(applications).where(eq(applications.jobId, jobId)).get()!;
 
-    // Under threshold → closed/low_fit so it is never re-scored.
-    if (app.stage === "found" && job.fitScore != null && job.fitScore < thresholdFor(job.companyId)) {
+    // A job an earlier run closed as low fit, now found for a lookup: the user asked for it, so it comes back.
+    if (status === "updated" && lookup && !existing?.lookupId && app.stage === "closed" && app.closedReason === "low_fit") {
+      app = changeStage(app.id, "found", { source: "agent", detail: `Reopened: found for your lookup (${lookup.title ?? lookup.company})`, extra: { closedReason: null } });
+    }
+
+    // Under threshold → closed/low_fit so it is never re-scored. A job found for a lookup is kept whatever it
+    // scored: the user asked for it, so they get to see it and decide.
+    if (app.stage === "found" && job.fitScore != null && job.lookupId == null && job.fitScore < thresholdFor(job.companyId)) {
       app = changeStage(app.id, "closed", { source: "agent", detail: `Fit ${job.fitScore} under threshold`, extra: { closedReason: "low_fit" } });
+    } else if (status === "created" && job.lookupId != null) {
+      logEvent({ applicationId: app.id, type: "note", title: `Found for your lookup: ${job.title}`, detail: `${job.fitScore != null ? `Fit ${job.fitScore} · ` : ""}${job.source === "linkedin" ? "LinkedIn" : "Careers site"}` });
     } else if (status === "created" && job.fitScore != null) {
       logEvent({ applicationId: app.id, type: "note", title: `New match: ${job.title}`, detail: `Fit ${job.fitScore} · ${job.source === "linkedin" ? "LinkedIn" : "Careers site"}` });
     }
