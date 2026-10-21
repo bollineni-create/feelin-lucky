@@ -5,6 +5,7 @@
 #   com.jobhunt.update  runs scripts/auto-update.sh every 15 minutes (installs new commits on main)
 # launchd uses the Mac's local time zone; keep the Mac on Pacific time for 7:00 AM PT.
 #   scripts/install-launchd.sh            install / reinstall
+#   scripts/install-launchd.sh --app-only rewrite and restart com.jobhunt.app alone (auto-update.sh uses it)
 #   scripts/install-launchd.sh --remove   uninstall
 set -euo pipefail
 
@@ -16,6 +17,18 @@ UPDATE_PLIST="$AGENTS/com.jobhunt.update.plist"
 UID_NUM="$(id -u)"
 
 unload() { launchctl bootout "gui/$UID_NUM" "$1" 2>/dev/null || true; }
+# bootout returns before launchd has let go of the job, and bootstrapping it again straight away can fail
+# ("Input/output error"): wait for it to go, then try a few times.
+load() {
+  local label i
+  label="$(basename "$1" .plist)"
+  for i in $(seq 1 20); do launchctl print "gui/$UID_NUM/$label" >/dev/null 2>&1 || break; sleep 0.5; done
+  for i in 1 2 3 4; do
+    launchctl bootstrap "gui/$UID_NUM" "$1" 2>/dev/null && return 0
+    sleep "$i"
+  done
+  launchctl bootstrap "gui/$UID_NUM" "$1"
+}
 
 if [ "${1:-}" = "--remove" ]; then
   unload "$APP_PLIST"; unload "$DAILY_PLIST"; unload "$UPDATE_PLIST"
@@ -24,8 +37,15 @@ if [ "${1:-}" = "--remove" ]; then
 fi
 
 [ "$(uname)" = "Darwin" ] || { echo "launchd is macOS only."; exit 1; }
-NPM="$(command -v npm)" || { echo "npm not found"; exit 1; }
-NODE_DIR="$(dirname "$(command -v node)")"
+# Rewriting the app's launch agent keeps the node the install chose (better-sqlite3 is built for it): the one next to
+# the npm or node the existing agent runs. Otherwise, the node on PATH (Install Job Hunt.command puts its pick first).
+NODE_BIN=""
+if [ "${1:-}" = "--app-only" ] && [ -f "$APP_PLIST" ]; then
+  PROG="$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" "$APP_PLIST" 2>/dev/null || true)"
+  [ -n "$PROG" ] && [ -x "$(dirname "$PROG")/node" ] && NODE_BIN="$(dirname "$PROG")/node"
+fi
+[ -n "$NODE_BIN" ] || NODE_BIN="$(command -v node)" || { echo "node not found"; exit 1; }
+NODE_DIR="$(dirname "$NODE_BIN")"
 CLAUDE_DIR="$(dirname "$(command -v claude 2>/dev/null || echo /usr/local/bin/claude)")"
 TZ_NAME="$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')"
 mkdir -p "$AGENTS" "$ROOT/logs"
@@ -36,6 +56,9 @@ for d in 1 2 3 4 5; do
 "
 done
 
+# The server runs as node itself rather than through npm: npm is a script, and macOS only asks "node wants to
+# control Mail" (email tracking) for a real program. Started through a script, Mail access is refused unasked.
+write_app_plist() {
 cat > "$APP_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -44,7 +67,7 @@ cat > "$APP_PLIST" <<PLIST
   <key>Label</key><string>com.jobhunt.app</string>
   <key>WorkingDirectory</key><string>$ROOT</string>
   <key>ProgramArguments</key>
-  <array><string>$NPM</string><string>start</string></array>
+  <array><string>$NODE_BIN</string><string>$ROOT/node_modules/next/dist/bin/next</string><string>start</string><string>-H</string><string>127.0.0.1</string><string>-p</string><string>3000</string></array>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>$NODE_DIR:$CLAUDE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>RunAtLoad</key><true/>
@@ -54,6 +77,15 @@ cat > "$APP_PLIST" <<PLIST
 </dict>
 </plist>
 PLIST
+}
+
+if [ "${1:-}" = "--app-only" ]; then
+  write_app_plist
+  unload "$APP_PLIST"
+  load "$APP_PLIST"
+  echo "Reinstalled com.jobhunt.app (runs $NODE_BIN)."; exit 0
+fi
+write_app_plist
 
 cat > "$DAILY_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -96,7 +128,7 @@ PLIST
 
 for p in "$APP_PLIST" "$DAILY_PLIST" "$UPDATE_PLIST"; do
   unload "$p"
-  launchctl bootstrap "gui/$UID_NUM" "$p"
+  load "$p"
 done
 echo "Installed. App: http://127.0.0.1:3000 · daily run: weekdays 7:00 AM ($TZ_NAME) · updates from GitHub: checked every 15 minutes."
 [ "$TZ_NAME" = "America/Los_Angeles" ] || echo "Note: this Mac isn't on Pacific time, so 7:00 AM is local time."

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Header } from "@/components/Nav";
 import { themeScript } from "@/components/ThemeToggle";
 import { activeRun, getProfile, latestRuns, queueItems } from "@/lib/logic";
+import { getMailSettings, toReviewCount } from "@/lib/mail";
 import "./globals.css";
 
 export const metadata: Metadata = { title: "Lodestar" };
@@ -22,6 +23,7 @@ function lastScanText() {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const queueCount = queueItems().filter((a) => a.stage === "found").length;
+  const mailCount = getMailSettings().enabled ? toReviewCount() : 0;
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -31,7 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" />
       </head>
       <body>
-        <Header queueCount={queueCount} lastScan={lastScanText()} owner={getProfile().fullName.split(" ")[0] ?? ""} />
+        <Header queueCount={queueCount} mailCount={mailCount} lastScan={lastScanText()} owner={getProfile().fullName.split(" ")[0] ?? ""} />
         <main>
           <div className="container">{children}</div>
         </main>

@@ -2,10 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { STAGES } from "@/db/schema";
 import { STAGE_LABEL, getApplicationByJob } from "@/lib/logic";
+import { KIND_LABEL, mailLink } from "@/lib/mail";
 import { fmtDate, fmtDateTime, modeLabel, sourceLabel } from "@/lib/format";
 import { Hl } from "@/components/Hl";
 import { addNote, approveApplication, saveMaterials, saveTracking, undoApplication } from "../../actions";
@@ -18,6 +19,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   const a = getApplicationByJob(jobId);
   if (!a) notFound();
   const j = a.job;
+  const mail = db.select().from(schema.emails).where(eq(schema.emails.applicationId, a.id)).orderBy(desc(schema.emails.receivedAt)).all();
   const history = db.select().from(schema.events).where(eq(schema.events.applicationId, a.id)).orderBy(asc(schema.events.at), asc(schema.events.id)).all();
   const dir = path.join(DATA_DIR, "applications", String(jobId));
   const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => !f.startsWith(".")).sort() : [];
@@ -194,10 +196,34 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                   </a>
                 ) : null}
                 {a.confirmationText ? <div className="small secondary">{a.confirmationText}</div> : null}
-                {!a.confirmationScreenshot && !a.confirmationText ? "—" : null}
+                {a.emailConfirmedAt ? <div className="small status-ok">Email from the employer, {fmtDateTime(a.emailConfirmedAt)}</div> : null}
+                {!a.confirmationScreenshot && !a.confirmationText && !a.emailConfirmedAt ? "—" : null}
               </dd>
             </dl>
           </section>
+
+          {mail.length ? (
+            <section className="panel">
+              <h2>Emails</h2>
+              <ul className="feed">
+                {mail.map((e) => (
+                  <li key={e.id}>
+                    <span className="mark email" aria-hidden />
+                    <div>
+                      <div className="t">
+                        <a href={mailLink(e.messageId)}>{e.subject}</a>
+                      </div>
+                      <div className="d">
+                        {e.status === "review" ? "Needs a look" : KIND_LABEL[e.kind]} · {e.fromName ?? e.fromAddress}
+                      </div>
+                      {e.summary ? <div className="d">{e.summary}</div> : null}
+                      <div className="w">{fmtDateTime(e.receivedAt)}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
           <section className="panel">
             <h2>Status history</h2>

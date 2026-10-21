@@ -299,3 +299,13 @@ textarea.code { font: 13px/1.5 var(--mono); }
 .kv dt { color: var(--ink-3); }
 .kv dd { margin: 0; }
 .tabs-md { display: grid; gap: 16px; }
+
+/* Mail page */
+.mail-list { list-style: none; margin: 0; padding: 0; }
+.mail-item { display: flex; flex-direction: column; gap: 6px; padding: 14px 0; border-top: 1px solid var(--divider); }
+.mail-item:first-child { border-top: 0; padding-top: 4px; }
+.mail-item .t { font-size: 15px; font-weight: 500; color: var(--ink); }
+.mail-item .d { font-size: 13px; color: var(--ink-2); }
+.mail-body { margin-top: 6px; max-height: 260px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--muted); }
+.mail-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+.mail-form select { flex: 1 1 220px; min-width: 0; }

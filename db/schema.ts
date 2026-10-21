@@ -89,6 +89,9 @@ export const applications = sqliteTable(
     linkedinStatus: text("linkedin_status"),
     // Submitted by the agent under the auto-apply rules rather than a Queue approval.
     autoApplied: integer("auto_applied", { mode: "boolean" }).notNull().default(false),
+    // When the employer's "we received your application" email arrived (Apple Mail), and the latest email about it.
+    emailConfirmedAt: text("email_confirmed_at"),
+    lastEmailAt: text("last_email_at"),
   },
   (t) => [uniqueIndex("applications_job_idx").on(t.jobId), index("applications_stage_idx").on(t.stage)],
 );
@@ -121,6 +124,87 @@ export const events = sqliteTable(
   },
   (t) => [index("events_app_idx").on(t.applicationId)],
 );
+
+// What an email about the job search says. The app is sure of confirmations, rejections and status updates on its
+// own; interviews, assessments, offers and anything else wait for the agent or you to say what they are.
+export const EMAIL_KINDS = ["confirmation", "rejection", "interview", "assessment", "offer", "update", "other"] as const;
+export type EmailKind = (typeof EMAIL_KINDS)[number];
+
+// "done": recorded on its application. "review": the agent or you still has to say what it is or which job it's
+// about. "dismissed": not about any application in Lodestar.
+export const EMAIL_STATUSES = ["done", "review", "dismissed"] as const;
+export type EmailStatus = (typeof EMAIL_STATUSES)[number];
+
+/** Emails about the job search, read from Apple Mail. Nothing else from the mailbox is kept. */
+export const emails = sqliteTable(
+  "emails",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    // The RFC Message-ID header, which stays the same when the message moves between mailboxes.
+    messageId: text("message_id").notNull(),
+    // Where it is in Mail, to find it again quickly: the account (its name, and Mail's id for it: two accounts can
+    // share a name), "inbox", "junk" or the mailbox Lodestar filed it in, and Mail's own id for the message there
+    // (which changes when it moves). Message-ID searches are slow in Mail.
+    account: text("account"),
+    accountId: text("account_id"),
+    mailbox: text("mailbox"),
+    mailId: integer("mail_id"),
+    fromName: text("from_name"),
+    fromAddress: text("from_address"),
+    subject: text("subject").notNull(),
+    receivedAt: text("received_at").notNull(),
+    // Plain text, trimmed.
+    body: text("body"),
+    kind: text("kind", { enum: EMAIL_KINDS }).notNull(),
+    status: text("status", { enum: EMAIL_STATUSES }).notNull(),
+    applicationId: integer("application_id").references(() => applications.id),
+    // How it was tied to its application: "title" (company and job title), "company" (the only application in
+    // flight there), "agent" or "you".
+    matchedBy: text("matched_by"),
+    // Applications it could be about, when the app couldn't tell which.
+    candidateIds: text("candidate_ids", { mode: "json" }).$type<number[]>(),
+    // Sent from an address that vouches for the company (an applicant system, a job board, the company's own
+    // domain), not just a display name anyone can type. Only these change anything without review.
+    trusted: integer("trusted", { mode: "boolean" }).notNull().default(false),
+    // One line from the agent or you on what it says.
+    summary: text("summary"),
+    // The stage move it made on its application (from → to), so "Wrong? Look again" can put it back.
+    movedFrom: text("moved_from", { enum: STAGES }),
+    movedTo: text("moved_to", { enum: STAGES }),
+    // The mailbox Lodestar moved it to in Mail, whether Lodestar flagged it, and why filing it failed, if it did.
+    filedTo: text("filed_to"),
+    flagged: integer("flagged", { mode: "boolean" }).notNull().default(false),
+    fileError: text("file_error"),
+    createdAt: text("created_at").notNull().$defaultFn(now),
+    resolvedAt: text("resolved_at"),
+  },
+  (t) => [uniqueIndex("emails_message_idx").on(t.messageId), index("emails_app_idx").on(t.applicationId), index("emails_status_idx").on(t.status)],
+);
+
+export type MailCheckSummary = { looked_at: number; new: number; recorded: number; to_review: number; filed: number; skipped?: string };
+
+/** Email tracking through Apple Mail: what to do, and how the last check went. One row (id 1). */
+export const mailSettings = sqliteTable("mail_settings", {
+  id: integer("id").primaryKey(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  // The mailbox Lodestar files job emails in, created inside each Mail account so it syncs to the phone.
+  mailboxName: text("mailbox_name").notNull().default("Lodestar"),
+  fileEmails: integer("file_emails", { mode: "boolean" }).notNull().default(true),
+  flagNeedsReply: integer("flag_needs_reply", { mode: "boolean" }).notNull().default(true),
+  includeJunk: integer("include_junk", { mode: "boolean" }).notNull().default(true),
+  notify: integer("notify", { mode: "boolean" }).notNull().default(true),
+  // Mail account names to read; empty reads them all.
+  accounts: text("accounts", { mode: "json" }).$type<string[]>().notNull().default([]),
+  lookbackDays: integer("lookback_days").notNull().default(30),
+  // Where the next check starts while a check that had more to read than it could is catching up.
+  backfillFrom: text("backfill_from"),
+  knownAccounts: text("known_accounts", { mode: "json" }).$type<string[]>(),
+  lastCheckAt: text("last_check_at"),
+  lastOkAt: text("last_ok_at"),
+  lastError: text("last_error"),
+  lastSummary: text("last_summary", { mode: "json" }).$type<MailCheckSummary>(),
+  updatedAt: text("updated_at").notNull().$defaultFn(now),
+});
 
 export type BroadSearch = { label: string; query: string };
 
@@ -184,3 +268,5 @@ export type Run = typeof runs.$inferSelect;
 export type Event = typeof events.$inferSelect;
 export type SearchCriteria = typeof searchCriteria.$inferSelect;
 export type Profile = typeof profile.$inferSelect;
+export type Email = typeof emails.$inferSelect;
+export type MailSettings = typeof mailSettings.$inferSelect;

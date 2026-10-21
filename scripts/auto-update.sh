@@ -44,6 +44,16 @@ main() {
   fi
   trap 'rm -rf "$LOCK"; [ -n "${TMP:-}" ] && rm -rf "$TMP"' EXIT
 
+  # Installs from before email tracking start the server through npm (`npm start`), which macOS won't let control
+  # Mail. Rewrite that launch agent to run node itself (once; it restarts the server, so only when no agent run is
+  # going). If restarting it failed, the marker has the next check try again.
+  APP_PLIST="$HOME/Library/LaunchAgents/com.jobhunt.app.plist"
+  RETRY="logs/.app-agent-retry"
+  if [ -f "$APP_PLIST" ] && { [ "$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:1" "$APP_PLIST" 2>/dev/null)" = "start" ] || [ -f "$RETRY" ]; }; then
+    if bash scripts/install-launchd.sh --app-only >>"$LOG" 2>&1; then rm -f "$RETRY"; log "Moved com.jobhunt.app to run node directly (needed for Apple Mail access)."
+    else touch "$RETRY"; log "Couldn't restart com.jobhunt.app; trying again on the next check. Or run 'Install Job Hunt.command' again."; fi
+  fi
+
   LATEST="$(curl -fsSL -H "Accept: application/vnd.github.sha" "https://api.github.com/repos/$REPO/commits/$BRANCH" 2>/dev/null)"
   # Offline or rate-limited; try again next time.
   [[ "$LATEST" =~ ^[0-9a-f]{40}$ ]] || { tell "Couldn't reach GitHub to check for updates. Try again later."; exit 0; }

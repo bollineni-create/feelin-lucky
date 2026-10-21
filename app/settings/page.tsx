@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import Link from "next/link";
 import path from "node:path";
 import { DATA_DIR } from "@/lib/db";
 import { getCriteria, getProfile } from "@/lib/logic";
@@ -20,7 +21,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <div className="page-head">
         <div>
           <h1>Settings</h1>
-          <p className="sub">The agent reads both of these at the start of every run. Titles and dates on forms come only from your profile.</p>
+          <p className="sub">
+            The agent reads both of these at the start of every run. Titles and dates on forms come only from your profile. Email tracking (Apple Mail) is set up on
+            the <Link href="/mail">Mail</Link> page.
+          </p>
         </div>
       </div>
 

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 
 export function RunButton({ action, label, pendingLabel, primary, disabled, doneMessage = "Started — watch Chrome. The run log updates as it goes." }: {
-  action: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  action: () => Promise<{ ok: true; message?: string } | { ok: false; error: string }>;
   label: string;
   pendingLabel: string;
   primary?: boolean;
@@ -21,7 +21,7 @@ export function RunButton({ action, label, pendingLabel, primary, disabled, done
         onClick={() =>
           start(async () => {
             const r = await action();
-            setMsg(r.ok ? doneMessage : r.error);
+            setMsg(r.ok ? (r.message ?? doneMessage) : r.error);
           })
         }
       >

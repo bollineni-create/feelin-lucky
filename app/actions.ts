@@ -7,6 +7,8 @@ import { db, schema } from "@/lib/db";
 import { changeStage, getApplication, getProfile, hasMaterials, iso, logEvent } from "@/lib/logic";
 import { renderMaterials } from "@/lib/render";
 import { startAgentRun, stopAgentRun } from "@/lib/runner";
+import { checkMailBriefly, getMailSettings, reopenEmail, resolveEmail, updateMailSettings, type Resolution } from "@/lib/mail";
+import { ApiError } from "@/lib/agent-auth";
 import { HIGHLIGHTS, PRIORITIES, SOURCES, STAGES, type Highlight, type Priority, type Stage, type WorkEntry, type EducationEntry, type BroadSearch, type Source } from "@/db/schema";
 
 const refresh = () => {
@@ -253,4 +255,92 @@ export async function saveCriteria(formData: FormData) {
     .run();
   refresh();
   redirect("/settings?saved=criteria");
+}
+
+// ---------- Mail ----------
+
+const STILL_CHECKING = "Still reading Mail; this page shows what it found when it's done.";
+
+export async function connectMail() {
+  updateMailSettings({ enabled: true, updatedAt: iso() });
+  const r = await checkMailBriefly();
+  refresh();
+  if (!r) return { ok: true as const, message: `Connected. ${STILL_CHECKING}` };
+  return r.ok ? { ok: true as const, message: `Connected. ${r.message}` } : r;
+}
+
+export async function checkMailNow() {
+  const r = await checkMailBriefly();
+  refresh();
+  if (!r) return { ok: true as const, message: STILL_CHECKING };
+  return r.ok ? { ok: true as const, message: r.message } : r;
+}
+
+export async function turnOffMail() {
+  updateMailSettings({ enabled: false, updatedAt: iso() });
+  refresh();
+}
+
+export async function saveMailSettings(formData: FormData) {
+  const num = (k: string, fallback: number, max: number) => Math.min(max, Math.max(1, Number(str(formData, k)) || fallback));
+  const known = getMailSettings().knownAccounts ?? [];
+  const picked = formData.getAll("accounts").filter((a): a is string => typeof a === "string" && known.includes(a));
+  if (known.length && !picked.length) redirect(`/mail?error=${encodeURIComponent("Pick at least one account to read, or turn email tracking off.")}`);
+  updateMailSettings({
+    // Mail treats "/" in a mailbox name as a folder path.
+    mailboxName: (str(formData, "mailbox_name") ?? "Lodestar").replace(/[/\\:]/g, "-").slice(0, 60),
+    fileEmails: formData.get("file_emails") === "on",
+    flagNeedsReply: formData.get("flag_needs_reply") === "on",
+    includeJunk: formData.get("include_junk") === "on",
+    notify: formData.get("notify") === "on",
+    // Every account ticked reads them all, including accounts added to Mail later.
+    accounts: picked.length === known.length ? [] : picked,
+    lookbackDays: num("lookback_days", 30, 120),
+    updatedAt: iso(),
+  });
+  refresh();
+  redirect("/mail?saved=1");
+}
+
+// What you say an email is, from the Mail page: the kind, and the stage it moves the application to.
+const EMAIL_CHOICES: Record<string, Pick<Resolution, "kind" | "stage">> = {
+  confirmation: { kind: "confirmation" },
+  rejection: { kind: "rejection", stage: "closed" },
+  screening: { kind: "interview", stage: "screening" },
+  interviewing: { kind: "interview", stage: "interviewing" },
+  assessment: { kind: "assessment" },
+  offer: { kind: "offer", stage: "offer" },
+  update: { kind: "update" },
+  other: { kind: "other" },
+};
+
+export async function resolveEmailAction(id: number, formData: FormData) {
+  const what = str(formData, "what") ?? "";
+  const applicationId = Number(str(formData, "application_id")) || null;
+  let error: string | null = null;
+  try {
+    if (what === "dismiss") resolveEmail(id, { dismiss: true }, "you");
+    else if (!applicationId) error = 'Pick which application it\'s about, or "Not about any application here".';
+    else if (EMAIL_CHOICES[what]) {
+      const choice = { ...EMAIL_CHOICES[what], applicationId };
+      try {
+        resolveEmail(id, choice, "you");
+      } catch (err) {
+        // The application is already further along than that: record the email and leave the stage.
+        if (!(err instanceof ApiError && err.status === 400 && choice.stage && applicationId)) throw err;
+        resolveEmail(id, { ...choice, stage: undefined }, "you");
+      }
+    } else error = "Pick what the email is.";
+  } catch (err) {
+    error = err instanceof Error ? err.message : "Couldn't save that.";
+  }
+  refresh();
+  // A redirect either way, so an error from an earlier try doesn't stay on the page.
+  redirect(error ? `/mail?error=${encodeURIComponent(error)}#review` : "/mail#review");
+}
+
+export async function reopenEmailAction(id: number) {
+  reopenEmail(id);
+  refresh();
+  redirect("/mail#review");
 }
