@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ThemeToggle } from "./ThemeToggle";
 
-export function Header({ queueCount, lastScan, owner }: { queueCount: number; lastScan: string; owner: string }) {
+export function Header({ queueCount, mailCount, lastScan, owner }: { queueCount: number; mailCount: number; lastScan: string; owner: string }) {
   const path = usePathname();
   const items = [
     { href: "/", label: "Pipeline" },
     { href: "/queue", label: "Today's queue", count: queueCount },
     { href: "/companies", label: "Companies" },
+    { href: "/mail", label: "Mail", count: mailCount },
     { href: "/settings", label: "Settings" },
   ];
   const isActive = (href: string) => (href === "/" ? path === "/" || path.startsWith("/jobs") : path.startsWith(href));
@@ -17,7 +18,9 @@ export function Header({ queueCount, lastScan, owner }: { queueCount: number; la
     ? lastScan
     : path.startsWith("/companies")
       ? "Red daily, others every 3 days · careers sites + LinkedIn"
-      : "Agent scans weekdays · 7:00 AM PT";
+      : path.startsWith("/mail")
+        ? "Checks Apple Mail every 15 minutes while Mail is open"
+        : "Agent scans weekdays · 7:00 AM PT";
 
   return (
     <header className="topbar">

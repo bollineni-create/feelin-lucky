@@ -5,6 +5,7 @@
 #   com.jobhunt.update  runs scripts/auto-update.sh every 15 minutes (installs new commits on main)
 # launchd uses the Mac's local time zone; keep the Mac on Pacific time for 7:00 AM PT.
 #   scripts/install-launchd.sh            install / reinstall
+#   scripts/install-launchd.sh --app-only rewrite and restart com.jobhunt.app alone (auto-update.sh uses it)
 #   scripts/install-launchd.sh --remove   uninstall
 set -euo pipefail
 
@@ -24,8 +25,8 @@ if [ "${1:-}" = "--remove" ]; then
 fi
 
 [ "$(uname)" = "Darwin" ] || { echo "launchd is macOS only."; exit 1; }
-NPM="$(command -v npm)" || { echo "npm not found"; exit 1; }
-NODE_DIR="$(dirname "$(command -v node)")"
+NODE_BIN="$(command -v node)" || { echo "node not found"; exit 1; }
+NODE_DIR="$(dirname "$NODE_BIN")"
 CLAUDE_DIR="$(dirname "$(command -v claude 2>/dev/null || echo /usr/local/bin/claude)")"
 TZ_NAME="$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')"
 mkdir -p "$AGENTS" "$ROOT/logs"
@@ -36,6 +37,9 @@ for d in 1 2 3 4 5; do
 "
 done
 
+# The server runs as node itself rather than through npm: npm is a script, and macOS only asks "node wants to
+# control Mail" (email tracking) for a real program. Started through a script, Mail access is refused unasked.
+write_app_plist() {
 cat > "$APP_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -44,7 +48,7 @@ cat > "$APP_PLIST" <<PLIST
   <key>Label</key><string>com.jobhunt.app</string>
   <key>WorkingDirectory</key><string>$ROOT</string>
   <key>ProgramArguments</key>
-  <array><string>$NPM</string><string>start</string></array>
+  <array><string>$NODE_BIN</string><string>$ROOT/node_modules/next/dist/bin/next</string><string>start</string><string>-H</string><string>127.0.0.1</string><string>-p</string><string>3000</string></array>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>$NODE_DIR:$CLAUDE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>RunAtLoad</key><true/>
@@ -54,6 +58,15 @@ cat > "$APP_PLIST" <<PLIST
 </dict>
 </plist>
 PLIST
+}
+
+if [ "${1:-}" = "--app-only" ]; then
+  write_app_plist
+  unload "$APP_PLIST"
+  launchctl bootstrap "gui/$UID_NUM" "$APP_PLIST"
+  echo "Reinstalled com.jobhunt.app (runs $NODE_BIN)."; exit 0
+fi
+write_app_plist
 
 cat > "$DAILY_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

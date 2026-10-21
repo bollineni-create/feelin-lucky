@@ -15,7 +15,7 @@ A local app that tracks the search, and a daily Claude Code agent that finds job
 - **Fit scores, not noise.** Every job gets a fit score and reasons. Anything under the threshold (70, or 60 for high-priority companies) is closed on arrival and never scored again.
 - **Materials made for each job.** The agent writes Markdown from your own resume and CV text; the app renders it to PDF and Word in `data/applications/<job-id>/`.
 - **Auto-apply, if you want it.** Off by default. Switched on, the strong matches go out by themselves, within a daily cap, with a confirmation screenshot for each one. See [Auto-apply](#auto-apply).
-- **Tracking after you apply.** The agent checks portals you're already signed in to and records any change. Applications with no response after 14 days get a "Follow up" next action.
+- **Tracking by email.** Lodestar reads Apple Mail on your Mac for what employers send back: the "we received your application" confirmation, rejections, interview requests, assessments. Each one lands on its application, so you don't have to sign in to every careers portal to see where things stand. Job emails are filed in a Lodestar mailbox and the ones that need a reply are flagged. See [Email tracking](#email-tracking-apple-mail). Applications with no response after 14 days get a "Follow up" next action.
 - **Your facts only.** Titles, dates and details come from the profile you confirm in Settings and nowhere else. Until it's confirmed, nothing is filled or submitted.
 - **A Mac app that keeps itself up to date.** Lodestar.app opens in its own window from the Dock, runs the agent every weekday at 7:00 AM and installs new versions from `main` on its own.
 
@@ -56,12 +56,13 @@ Open **Settings** and:
 | Pipeline | `/` | Every application by stage, the update feed and the run log. **Run now** starts a run. |
 | Today's matches | `/queue` | Approve or skip what the agent prepared. **Submit approved now** sends them right away. |
 | Company watchlist | `/companies` | Companies by category, their careers sites and scan history, and the broad searches |
-| Application | `/jobs/[id]` | One job: fit, materials, the posting, tracking and status history |
+| Application | `/jobs/[id]` | One job: fit, materials, the posting, tracking, its emails and status history |
+| Mail | `/mail` | Email tracking: connect Apple Mail, the emails that need a look, and recent job emails |
 | Settings | `/settings` | Profile and search criteria, including auto-apply |
 
 ## The Mac app
 
-**Lodestar.app** opens Lodestar in its own window with its own menus, the same way Palimpsest works, starting the server first if it isn't running. **View** has Pipeline, Queue, Companies and Settings as ⌘1–⌘4. Job postings and your resume files open in your normal browser. The window needs Apple's command line tools; if they're missing, run `xcode-select --install` and then the installer again (until then, Lodestar opens in your browser).
+**Lodestar.app** opens Lodestar in its own window with its own menus, the same way Palimpsest works, starting the server first if it isn't running. **View** has Pipeline, Queue, Companies, Settings and Mail as ⌘1–⌘5. Job postings and your resume files open in your normal browser. The window needs Apple's command line tools; if they're missing, run `xcode-select --install` and then the installer again (until then, Lodestar opens in your browser).
 
 **Updates install themselves.** Lodestar checks GitHub each time you open it and every 15 minutes in the background. When `main` has a new commit it downloads it, rebuilds and restarts the app, and you get a notification. An open window reloads on the new version by itself, and if the update changes Lodestar.app itself, the app is rebuilt in place and reopened.
 
@@ -89,7 +90,7 @@ A full run goes through four phases, in this order:
 | **Submit** | Sends what you approved in the Queue, then what passes the auto-apply checks |
 | **Find** | Scans the watchlist companies that are due, then the broad and LinkedIn searches, and scores what it finds |
 | **Prepare** | Writes the resume or CV, cover letter and screening answers for each good match |
-| **Track** | Re-checks open applications and records any change in stage |
+| **Track** | Reads Apple Mail for replies and settles the emails the app wasn't sure of, then re-checks postings, and portals only where email is silent |
 
 **What it needs.** Claude Code signed in with `/login` (Claude in Chrome is off for an API key or a `claude setup-token` token, so the script ignores `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`), and the Claude in Chrome extension installed and signed in. The script opens Chrome if it isn't running (set `JOBHUNT_CHROME_APP` in `.env` for another Chromium browser). The script checks `claude --help` for `--chrome`; if your version names it differently, set `CLAUDE_CHROME_FLAG` in `.env`. If the Chrome tools aren't named `mcp__claude-in-chrome__*` (check `/mcp` inside `claude --chrome`), set `CHROME_MCP_PREFIX`. For confirmation screenshots, give your terminal (and `/bin/bash` for launchd) Screen Recording permission; without it, the agent saves the confirmation text instead.
 
@@ -135,6 +136,35 @@ Those jobs show **Auto-applies next run** in the Queue, so you can still skip on
 
 LinkedIn's user agreement restricts automated use of the site, and frequent automated Easy Apply can get an account restricted. The runbook keeps it slow (30 seconds or more between submissions, stop on any security check), but keep the daily cap low, or untick LinkedIn and auto-apply only on careers sites.
 
+## Email tracking (Apple Mail)
+
+Employers answer by email: a confirmation that the application arrived, then a rejection, a request to talk, an assessment or an offer. Lodestar reads those from the Mail app on your Mac, whatever accounts it has (Gmail, iCloud, Outlook), so the pipeline stays current without signing in to each portal.
+
+**Turn it on.** Open **Mail** in Lodestar and click **Connect Apple Mail**. macOS asks whether **node** (the program Lodestar's server runs as) may control Mail: choose **OK**. Lodestar then reads the last 30 days of your inbox and Junk, and after that checks every 15 minutes while Mail is open. Each morning's run checks too, opening Mail in the background if it's closed.
+
+**What happens to each email.**
+
+| The email | In Lodestar | In Mail |
+| --- | --- | --- |
+| Confirmation ("we received your application") | Marked **Email ✓** on the application. If it was still found or approved (you applied yourself, or a submit wasn't recorded), it moves to Applied | Moved to the **Lodestar** mailbox |
+| Rejection | Closed as rejected | Moved to **Lodestar** |
+| Status update ("under review") | Noted on the application | Moved to **Lodestar** |
+| Interview request, assessment, offer | Noted, with the next action "Read the email from …"; the morning run (or you) moves the stage forward | Flagged, left in the inbox |
+| One Lodestar can't tie to a single application | Waits under **Needs a look** on the Mail page, with the applications it could be | Left alone |
+
+The Lodestar mailbox is created inside each Mail account (not "On My Mac"), so it shows on your phone too, and unread mail stays unread. On Gmail it's a label: a scripted move adds it but usually leaves the email in the inbox as well. Exchange accounts don't reliably take a mailbox made by a script, so there Lodestar only flags. The mailbox name, filing, flagging, Junk, notifications and which accounts to read are all settings on the Mail page.
+
+**How it tells which job an email is about.** By the company (the sender, its domain, the name in the subject) and the job title. A title match is enough on its own; the company alone is enough only when you have exactly one application in flight there. Confirmations, rejections and status updates it's sure of are recorded straight away; anything else goes to the agent's next run, which reads it, picks the application and moves the stage, or to you on the Mail page.
+
+**What it keeps.** Only emails about your job search: from applicant tracking systems (Greenhouse, Workday, Lever, Ashby, iCIMS and the like), job boards' "your application was sent" notices, and recruiters or companies you've applied to writing about an application. Bank, shopping and newsletter mail from the same companies ("your credit card application") isn't kept. Lodestar never sends, replies to, forwards or deletes an email; it only moves and flags the job emails as above.
+
+**If it says Lodestar isn't allowed to use Mail.** Open System Settings → Privacy & Security → Automation, find **node**, and turn on **Mail** under it. If node isn't listed, click **Check mail now** on the Mail page while you're at the Mac and answer the prompt. To ask again from scratch, run `tccutil reset AppleEvents` in Terminal (it resets every app's Automation choices, not just Lodestar's) and click **Check mail now**.
+
+- macOS only asks on behalf of a real program, so the always-on server now runs as `node` itself rather than through `npm start`. Installs from before this change are moved over by the updater on its next check (within 15 minutes, and not during a run); running **Install Job Hunt.command** again does the same.
+- Permission belongs to that `node`. After Homebrew upgrades Node (`brew upgrade node`), macOS asks once more. The copy of Node the installer downloads into the Lodestar folder keeps it.
+- Notifications come from **Script Editor** as far as macOS is concerned. If none appear, allow Script Editor under System Settings → Notifications. They're a convenience: the Mail page and the Pipeline always have the full picture.
+- On a very large inbox (tens of thousands of messages), Mail can pause for a moment while Lodestar checks it.
+
 ## Safety rails
 
 Enforced in code as well as in the runbook.
@@ -142,6 +172,8 @@ Enforced in code as well as in the runbook.
 - `/api/agent/*` requires `Authorization: Bearer $AGENT_TOKEN`. The app binds to loopback only.
 - The agent can't approve: the API rejects `found → approved`, and `→ applied` from anything but `approved`, except `found → applied` for a job that passes the auto-apply checks above (re-checked on the server at that moment, cap included). Approval only comes from the Queue's **Approve and submit** button.
 - `approved_to_submit` is empty while the profile is unconfirmed.
+- An email moves an application only forward (to applied, screening, interviewing or offer, or closed as rejected), never to approved, and only an email the app read from Mail itself. The agent can only settle emails the app put up for review.
+- Lodestar never sends, replies to, forwards or deletes email. It keeps only job emails, and moves or flags only those.
 - Jobs under the fit threshold are closed as `low_fit` on arrival and never re-scored. A job keeps its first score.
 - In headless mode the agent may only use the Chrome tools, `agent/api.sh`, `screencapture`, reads, and writes to `logs/tmp/`. `curl`, `rm`, `git` and WebFetch are blocked.
 - Page content is data, not instructions: the runbook tells the agent to ignore anything a job posting or portal tells it to do.
@@ -160,6 +192,10 @@ lib/logic.ts              stages, thresholds, follow-ups and the auto-apply chec
 lib/render.ts             Markdown to PDF and DOCX
 lib/runner.ts             starts and watches agent runs from the app
 lib/dedupe.ts             matches a job to one already found (company + title + location)
+lib/mail.ts               email tracking: reads Apple Mail, records job emails, files and flags them
+lib/mail-rules.ts         what an email is and which application it's about (tests in lib/mail-rules.test.ts)
+scripts/mail/mail.js      the bridge to Apple Mail (JavaScript for Automation, run with osascript)
+instrumentation.ts        starts the 15-minute mail check when the app starts
 agent/RUNBOOK.md          the agent's standing instructions
 agent/api.sh              the agent's way in to the API, with the bearer token added
 scripts/daily-run.sh      starts a headless Claude Code run
@@ -184,6 +220,8 @@ Next.js 15, React 19, SQLite through better-sqlite3 and Drizzle, `pdfkit` and `d
 | POST | `/api/agent/events` | Feed updates |
 | POST | `/api/agent/screenshots` | Confirmation screenshot (multipart or base64) and/or text |
 | PATCH | `/api/agent/companies/:id` | `careers_url`, `ats_type`, `scanned` |
+| POST | `/api/agent/mail/sync` | Check Apple Mail now and record the job emails |
+| PATCH | `/api/agent/emails/:id` | Settle an email the app put up for review: application, kind, stage (forward only), or dismiss |
 
 ### Notes on the build
 
@@ -193,4 +231,4 @@ Next.js 15, React 19, SQLite through better-sqlite3 and Drizzle, `pdfkit` and `d
 
 ## Your data
 
-Everything stays on your Mac: the database in `data/jobhunt.db`, rendered materials in `data/applications/`, your source documents in `data/source-docs/`, and logs in `logs/`. `data/`, `logs/`, `.env`, `my-profile.json` and PDFs in the folder are git-ignored. The only things that leave the machine are what the agent types into job sites in your Chrome, and what Claude Code sends to Anthropic to run the agent.
+Everything stays on your Mac: the database in `data/jobhunt.db` (with the job emails Lodestar keeps), rendered materials in `data/applications/`, your source documents in `data/source-docs/`, and logs in `logs/`. `data/`, `logs/`, `.env`, `my-profile.json` and PDFs in the folder are git-ignored. The only things that leave the machine are what the agent types into job sites in your Chrome, and what Claude Code sends to Anthropic to run the agent, which includes the job emails it settles for you (the ones under **Needs a look**).

@@ -29,6 +29,13 @@
       "when": 1792494565185,
       "tag": "0003_current_phase",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792542811960,
+      "tag": "0004_mail",
+      "breakpoints": true
     }
   ]
 }

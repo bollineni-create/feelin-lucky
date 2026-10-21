@@ -163,14 +163,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func isLocal(_ url: URL) -> Bool { url.host == appURL.host && url.port == appURL.port }
 
     // Job postings and other sites open in the default browser; the app's own pages stay in the window.
+    // "Open in Mail" links (message://<Message-ID>) and other app links go to the app that handles them.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        if let url = action.request.url, url.scheme?.hasPrefix("http") == true, !isLocal(url) {
-            NSWorkspace.shared.open(url)
-            decisionHandler(.cancel)
-            return
+        if let url = action.request.url, let scheme = url.scheme?.lowercased() {
+            let web = scheme == "http" || scheme == "https"
+            if (web && !isLocal(url)) || !(web || ["about", "data", "blob"].contains(scheme)) {
+                if scheme == "message" { openInMail(url) } else { NSWorkspace.shared.open(url) }
+                decisionHandler(.cancel)
+                return
+            }
         }
         decisionHandler(.allow)
+    }
+
+    // A message:// link opens that email in Mail. Started cold, Mail can show its last mailbox and drop the link, so
+    // it's opened first and handed the link once it's up.
+    private func openInMail(_ url: URL) {
+        let mailID = "com.apple.mail"
+        guard let mail = NSWorkspace.shared.urlForApplication(withBundleIdentifier: mailID) else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        if !NSRunningApplication.runningApplications(withBundleIdentifier: mailID).isEmpty {
+            NSWorkspace.shared.open([url], withApplicationAt: mail, configuration: config, completionHandler: nil)
+            return
+        }
+        NSWorkspace.shared.openApplication(at: mail, configuration: config) { _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                NSWorkspace.shared.open([url], withApplicationAt: mail, configuration: config, completionHandler: nil)
+            }
+        }
     }
 
     // Resumes, cover letters and screenshots (opened with target="_blank") open in their own apps via the browser.
@@ -268,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let viewItem = NSMenuItem(); main.addItem(viewItem)
         let view = NSMenu(title: "View")
-        for (title, key, path) in [("Pipeline", "1", "/"), ("Today's Queue", "2", "/queue"), ("Companies", "3", "/companies"), ("Settings", "4", "/settings")] {
+        for (title, key, path) in [("Pipeline", "1", "/"), ("Today's Queue", "2", "/queue"), ("Companies", "3", "/companies"), ("Settings", "4", "/settings"), ("Mail", "5", "/mail")] {
             let item = NSMenuItem(title: title, action: #selector(openPage(_:)), keyEquivalent: key)
             item.representedObject = path
             view.addItem(item)

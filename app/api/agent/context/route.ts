@@ -2,6 +2,7 @@ import path from "node:path";
 import { and, asc, eq, inArray, isNotNull, isNull, or, lt } from "drizzle-orm";
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
+import { mailContext } from "@/lib/mail";
 import { OPEN_STAGES, autoAppliedToday, bySubmitOrder, byWatchlistThenScore, autoApplyCandidates, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +72,9 @@ export const GET = agentRoute(async (req) => {
     linkedin_status: a.linkedinStatus,
     submitted_at: a.submittedAt,
     next_action: a.nextAction,
+    // From Apple Mail: when the employer's confirmation arrived, and the latest email about it.
+    email_confirmed_at: a.emailConfirmedAt,
+    last_email_at: a.lastEmailAt,
   }));
 
   const found = listApplications(eq(applications.stage, "found")).sort(byWatchlistThenScore);
@@ -164,5 +168,7 @@ export const GET = agentRoute(async (req) => {
       fit_reasons: a.job.fitReasons,
     })),
     skip_feedback: skipFeedback,
+    // Email tracking (Apple Mail): emails the app couldn't place or wasn't sure of wait in to_review for Phase D.
+    mail: mailContext(),
   };
 });

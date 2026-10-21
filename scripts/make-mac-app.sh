@@ -65,6 +65,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>Lodestar reads the emails employers send about your applications and files them in a Lodestar mailbox.</string>
   <key>JobHuntFolder</key><string>__ROOT__</string>
   <key>JobHuntNodeDir</key><string>__NODE_DIR__</string>
   <key>JobHuntAppHash</key><string>__HASH__</string>

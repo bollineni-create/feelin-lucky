@@ -5,6 +5,7 @@ import { activeRun, getCriteria, latestRuns, runActivity, listApplications, queu
 import { ago, fmtDate, fmtDateTime, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { LOG_TAIL_LINES, progressLine, runProgress } from "@/lib/run-progress";
 import { RunButton } from "@/components/RunButton";
+import { getMailSettings } from "@/lib/mail";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { runNow, stopRun } from "./actions";
 
@@ -87,10 +88,17 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   const running = activeRun();
   const runs = latestRuns(6);
 
+  const mail = getMailSettings();
   const applied = all.filter((a) => a.stage === "applied");
+  const confirmed = applied.filter((a) => a.emailConfirmedAt).length;
+  const followUp = applied.some((a) => a.nextAction === "Follow up");
   const kpis = [
     { label: "Awaiting your approval", value: queue.length, sub: "Found in today’s scan", href: "/queue" },
-    { label: "Applied", value: applied.length, sub: applied.some((a) => a.nextAction === "Follow up") ? "Some due a follow-up" : "No response yet" },
+    {
+      label: "Applied",
+      value: applied.length,
+      sub: confirmed ? `${confirmed} confirmed by email${followUp ? " · some due a follow-up" : ""}` : followUp ? "Some due a follow-up" : "No response yet",
+    },
     { label: "In conversation", value: all.filter((a) => a.stage === "screening" || a.stage === "interviewing" || a.stage === "offer").length, sub: "Screens and interviews" },
     { label: "Companies watched", value: companiesWatched, sub: "Plus LinkedIn Jobs and broad searches", href: "/companies" },
   ];
@@ -188,6 +196,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                         </div>
                         <div className="meta">
                           <span className="tag accent">{sourceLabel(a.job.source)}</span>
+                          {a.emailConfirmedAt && a.stage !== "closed" ? <span className="tag">Email ✓</span> : null}
                           <span className="date">{fmtDate(a.submittedAt ?? a.stageChangedAt)}</span>
                         </div>
                         {next ? <div className="next">Next: {next}</div> : null}
@@ -232,11 +241,16 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
               <li>Scans each watchlist company&apos;s careers page and your LinkedIn Jobs list</li>
               <li>Scores every new posting against your criteria and drops weak fits</li>
               <li>Drafts a tailored resume and cover letter for each strong match, then waits for your approval</li>
-              <li>Checks portals and LinkedIn for status changes on everything in flight</li>
+              <li>Reads Apple Mail for confirmations, rejections and interview requests on everything in flight, and checks LinkedIn</li>
             </ol>
             <p className="fine" style={{ marginTop: 12 }}>
               Nothing is submitted, no account is created and no password is entered without you.
             </p>
+            {mail.enabled ? null : (
+              <p className="fine" style={{ marginTop: 8 }}>
+                Email tracking is off: <Link href="/mail">connect Apple Mail</Link> so replies from employers update your applications.
+              </p>
+            )}
           </div>
           <div className="panel">
             <h2>Run log</h2>

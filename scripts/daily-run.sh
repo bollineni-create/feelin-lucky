@@ -332,6 +332,14 @@ elif [[ ",$PHASE," == *",find,"* && "$STATUS" = "ok" && "${SCANNED:-0}" = "0" &&
 else
   log "Run #$RUN_ID finished: $STATUS (exit $CODE)"
 fi
+
+# Employers' confirmation emails for what this run submitted usually arrive within minutes. With the run closed,
+# have the app read Apple Mail once more so they're recorded now (the app's own 15-minute check catches the rest).
+MAIL_NOTE="$(agent/api.sh POST /api/agent/mail/sync 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or d.get("error") or "")' 2>/dev/null)"
+case "$MAIL_NOTE" in
+  ""|"Email tracking is off"*) ;;
+  *) log "Mail: $MAIL_NOTE" ;;
+esac
 find logs/tmp -type f -mtime +14 -delete 2>/dev/null || true
 find logs -maxdepth 1 -name "run-*.jsonl" -mtime +30 -delete 2>/dev/null || true
 find logs -maxdepth 1 -name "run-*.debug.log" -mtime +7 -delete 2>/dev/null || true
