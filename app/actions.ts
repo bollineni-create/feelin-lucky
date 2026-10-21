@@ -50,14 +50,8 @@ export async function undoApplication(appId: number) {
   refresh();
 }
 
-export async function runScanNow() {
-  const r = await startAgentRun("scan", "manual");
-  refresh();
-  return r;
-}
-
-export async function runSearchNow() {
-  const r = await startAgentRun("search", "manual");
+export async function runNow() {
+  const r = await startAgentRun("all", "manual");
   refresh();
   return r;
 }

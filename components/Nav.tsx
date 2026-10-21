@@ -17,7 +17,7 @@ export function Header({ queueCount, lastScan, owner }: { queueCount: number; la
     ? lastScan
     : path.startsWith("/companies")
       ? "Red daily, others every 3 days · careers sites + LinkedIn"
-      : "Scan and job search weekdays · 7:00 AM PT";
+      : "Agent scans weekdays · 7:00 AM PT";
 
   return (
     <header className="topbar">

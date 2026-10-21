@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Starts an agent run: a headless Claude Code session with Claude in Chrome, following agent/RUNBOOK.md.
-#   scripts/daily-run.sh                       # the scan run, then the job search run (what launchd runs)
-#   scripts/daily-run.sh --run scan            # watchlist scan: submit, scan, prepare, track
-#   scripts/daily-run.sh --run search          # job search (LinkedIn and broad searches): submit, search, prepare
-#   scripts/daily-run.sh --run submit          # just submit approved applications
-#   scripts/daily-run.sh --phase scan,prepare  # any phases, comma-separated, in one run
-# Phases: submit, scan, search, prepare, track (find = scan,search, from before they were split).
+# Starts one agent run: a headless Claude Code session with Claude in Chrome, following agent/RUNBOOK.md.
+#   scripts/daily-run.sh                       # all phases (what launchd runs)
+#   scripts/daily-run.sh --phase submit        # just submit approved applications
+#   scripts/daily-run.sh --phase find,prepare  # find + score/prepare, no submitting
+# Phases: submit, find, prepare, track (comma-separated) or all.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,34 +16,20 @@ export PATH="$ROOT/.node/bin:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$
 # `claude setup-token` token. The run has to use the /login sign-in instead.
 unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
 
-RUN=""
-PHASE=""
+PHASE="all"
 TRIGGER="schedule"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run) RUN="${2:?--run needs a value}"; shift 2 ;;
-    --run=*) RUN="${1#*=}"; shift ;;
     --phase) PHASE="${2:?--phase needs a value}"; shift 2 ;;
     --phase=*) PHASE="${1#*=}"; shift ;;
     --trigger) TRIGGER="${2:?}"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-if [ -z "$PHASE" ]; then
-  case "${RUN:-all}" in
-    scan) PHASE="submit,scan,prepare,track" ;;
-    search) PHASE="submit,search,prepare" ;;
-    submit) PHASE="submit" ;;
-    all) PHASE="all" ;;
-    *) echo "unknown run: $RUN (scan, search, submit or all)" >&2; exit 2 ;;
-  esac
-fi
-PHASE="${PHASE//find/scan,search}"
-if [ "$PHASE" != "all" ]; then
-  for p in ${PHASE//,/ }; do
-    case "$p" in submit|scan|search|prepare|track) ;; *) echo "unknown phase: $p" >&2; exit 2 ;; esac
-  done
-fi
+[ "$PHASE" = "all" ] && PHASE="submit,find,prepare,track"
+for p in ${PHASE//,/ }; do
+  case "$p" in submit|find|prepare|track) ;; *) echo "unknown phase: $p" >&2; exit 2 ;; esac
+done
 
 MAX_MINUTES="${JOBHUNT_MAX_MINUTES:-120}"
 CHROME_FLAG="${CLAUDE_CHROME_FLAG:---chrome}"
@@ -62,63 +46,29 @@ log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
 
 # One run at a time.
 LOCK="logs/.run.lock"
-take_lock() {
-  if ! mkdir "$LOCK" 2>/dev/null; then
-    # Take over a lock whose run was killed outright (its pid is gone), or one older than any run can be (each
-    # run touches it as it starts, so the scan and search runs of one sequence each get the full time).
-    OLD_PID="$(cat "$LOCK/pid" 2>/dev/null)"
-    if { [ -n "$OLD_PID" ] && ! ps -o stat= -p "$OLD_PID" 2>/dev/null | grep -qv Z; } \
-      || [ -n "$(find "$LOCK" -maxdepth 0 -mmin +$((MAX_MINUTES + 10)) 2>/dev/null)" ]; then
-      rm -rf "$LOCK" && mkdir "$LOCK"
-    else
-      return 1
-    fi
+if ! mkdir "$LOCK" 2>/dev/null; then
+  # Take over a lock whose run was killed outright (its pid is gone), or one older than any run can be.
+  OLD_PID="$(cat "$LOCK/pid" 2>/dev/null)"
+  if { [ -n "$OLD_PID" ] && ! ps -o stat= -p "$OLD_PID" 2>/dev/null | grep -qv Z; } \
+    || [ -n "$(find "$LOCK" -maxdepth 0 -mmin +$((MAX_MINUTES + 10)) 2>/dev/null)" ]; then
+    rm -rf "$LOCK" && mkdir "$LOCK"
+  else
+    log "Another run holds $LOCK; exiting."; exit 0
   fi
-  trap 'rm -rf "$LOCK"' EXIT
-  # The app reads this to tell a live run from one whose process is gone, and to stop it.
-  echo $$ > "$LOCK/pid"
-}
-
-# The scan and the job search are two runs, each with its own run record, clock and Claude Code session. "all"
-# runs them one after the other under one lock, so nothing (an app update, another run) starts in between.
-# Stop run stops this process, which stops the run in progress and doesn't start the next one.
-if [ "$PHASE" = "all" ]; then
-  take_lock || { echo "[$(date '+%H:%M:%S')] Another run holds $LOCK; exiting."; exit 0; }
-  CHILD=""
-  trap '[ -n "$CHILD" ] && kill -TERM "$CHILD" 2>/dev/null && wait "$CHILD" 2>/dev/null; exit 143' TERM INT HUP
-  for r in scan search; do
-    JOBHUNT_LOCK_HELD=1 /bin/bash "$0" --run "$r" --trigger "$TRIGGER" &
-    CHILD=$!
-    wait "$CHILD"; CODE=$?
-    CHILD=""
-    # 1: the run couldn't start (the app, Claude Code or Claude in Chrome), and the next one would stop the same
-    # way. 143: it was stopped.
-    if [ "$CODE" -ne 0 ]; then
-      [ "$r" = scan ] && echo "[$(date '+%H:%M:%S')] The scan run ended with code $CODE; not starting the job search run."
-      exit "$CODE"
-    fi
-  done
-  exit 0
 fi
-
-if [ -n "${JOBHUNT_LOCK_HELD:-}" ]; then
-  # Started by the sequence above, which holds the lock and removes it at the end.
-  touch "$LOCK"
-elif ! take_lock; then
-  log "Another run holds $LOCK; exiting."; exit 0
-fi
+trap 'rm -rf "$LOCK"' EXIT
+# The app reads this to tell a live run from one whose process is gone, and to stop it.
+echo $$ > "$LOCK/pid"
 RUN_ID=""
 CLAUDE_PID=""
 WATCHDOG=""
 
 json_field() { python3 -c "import json,sys; print(json.load(sys.stdin)$1)" 2>/dev/null; }
 
-if ! CONTEXT="$(agent/api.sh GET /api/agent/context 2>>"$LOG")"; then
+if ! agent/api.sh GET /api/agent/context >/dev/null 2>>"$LOG"; then
   log "The app isn't answering on ${APP_URL:-http://127.0.0.1:3000}. Start it (npm start, or the com.jobhunt.app launch agent) and retry."
   exit 1
 fi
-# Watchlist companies due a scan as the run starts; a scan with none due has nothing to do.
-DUE="$(echo "$CONTEXT" | json_field "['companies_due_total']")"
 
 RUN_ID="$(agent/api.sh POST /api/agent/runs "{\"phase\":\"$PHASE\",\"trigger\":\"$TRIGGER\",\"log_path\":\"$ROOT/$LOG\"}" | json_field "['run_id']")"
 if [ -z "$RUN_ID" ]; then log "Could not create a run record."; exit 1; fi
@@ -190,13 +140,13 @@ WORK_MINUTES=$((MAX_MINUTES > 20 ? MAX_MINUTES - 10 : MAX_MINUTES / 2))
 FINISH_BY="$(in_minutes "$WORK_MINUTES")"
 
 # Each phase gets its own share of the time to FINISH_BY, so a long approved backlog can't eat the whole run
-# and leave the watchlist unscanned (submit 25, scan 45, search 45, prepare 20, track 10, out of the total of
-# the phases this run has). A phase that finishes early hands its leftover to the next one.
-phase_share() { case "$1" in submit) echo 25 ;; scan|search) echo 45 ;; prepare) echo 20 ;; track) echo 10 ;; esac; }
+# and leave the watchlist unscanned (submit 30%, find 40%, prepare 20%, track 10%; phases that aren't running
+# give their share to the ones that are). A phase that finishes early hands its leftover to the next one.
+phase_share() { case "$1" in submit) echo 30 ;; find) echo 40 ;; prepare) echo 20 ;; track) echo 10 ;; esac; }
 TOTAL_SHARE=0
 for p in ${PHASE//,/ }; do TOTAL_SHARE=$((TOTAL_SHARE + $(phase_share "$p"))); done
 PHASE_CLOCK=""; ELAPSED=0
-for p in submit scan search prepare track; do
+for p in submit find prepare track; do
   [[ ",$PHASE," == *",$p,"* ]] || continue
   ELAPSED=$((ELAPSED + WORK_MINUTES * $(phase_share "$p") / TOTAL_SHARE))
   PHASE_CLOCK="$PHASE_CLOCK
@@ -367,42 +317,18 @@ if grep -q "Browser extension is not connected" "$TRANSCRIPT" 2>/dev/null; then
   [ -n "$WHY" ] && { echo "--- Claude Code's own notes on the extension (last 5, from $DEBUG_LOG):"; echo "$WHY"; } >> "$LOG"
 fi
 
-# LinkedIn pages the agent opened. A job search can find nothing new on a quiet day (everything it sees is
-# already in the app), so this, not the job count, is what shows that it searched.
-LINKEDIN_CALLS="$(python3 - "$TRANSCRIPT" "$CHROME_TOOLS" 2>/dev/null <<'PY'
-import json, sys
-from urllib.parse import urlsplit
-n = 0
-for line in open(sys.argv[1]):
-    try: e = json.loads(line)
-    except ValueError: continue
-    if e.get("type") != "assistant": continue
-    for c in e.get("message", {}).get("content", []):
-        if c.get("type") != "tool_use" or not c.get("name", "").startswith(sys.argv[2]): continue
-        url = (c.get("input") or {}).get("url")
-        try: h = (urlsplit(url).hostname or "") if isinstance(url, str) else ""
-        except ValueError: h = ""
-        if h == "linkedin.com" or h.endswith(".linkedin.com"): n += 1
-print(n)
-PY
-)"
-
 RUN_JSON="$(agent/api.sh GET "/api/agent/runs/$RUN_ID" 2>/dev/null)"
 STATUS="$(echo "$RUN_JSON" | json_field "['run']['status']")"
 SCANNED="$(echo "$RUN_JSON" | json_field "['activity']['companies_scanned']")"
-UNSCANNED="$(echo "$RUN_JSON" | json_field "['activity']['companies_unscanned'].__len__()")"
 FOUND="$(echo "$RUN_JSON" | json_field "['activity']['jobs_found']")"
 log "Recorded by the app: ${SCANNED:-?} companies scanned, ${FOUND:-?} new jobs"
 if [ "$STATUS" = "running" ]; then
   KEPT="What it recorded before that (${SCANNED:-0} companies scanned, ${FOUND:-0} new jobs) is kept; the next run picks up the rest."
   if [ "$CODE" -eq 143 ]; then fail_run "Stopped at the ${MAX_MINUTES}-minute limit (JOBHUNT_MAX_MINUTES) before the agent finished. $KEPT"
   else fail_run "The agent exited (code $CODE) without closing the run. $KEPT See $LOG"; fi
-elif [[ ",$PHASE," == *",scan,"* && "$STATUS" = "ok" && "${DUE:-0}" != "0" && "${SCANNED:-0}" = "0" && "${UNSCANNED:-0}" = "0" ]]; then
-  # A scan phase that neither marked a due company scanned nor left a note on one didn't scan, whatever the
-  # agent reported.
-  fail_run "Scan phase recorded no scanned companies although $DUE were due; the agent didn't scan. See $TRANSCRIPT"
-elif [[ ",$PHASE," == *",search,"* && "$STATUS" = "ok" && "${FOUND:-0}" = "0" && "${LINKEDIN_CALLS:-0}" = "0" ]]; then
-  fail_run "Job search recorded no new jobs and opened no LinkedIn page; the agent didn't search. See $TRANSCRIPT"
+elif [[ ",$PHASE," == *",find,"* && "$STATUS" = "ok" && "${SCANNED:-0}" = "0" && "${FOUND:-0}" = "0" ]]; then
+  # A find phase that marked no company scanned and posted no job didn't search, whatever the agent reported.
+  fail_run "Find phase recorded no scanned companies and no jobs; the agent didn't search. See $TRANSCRIPT"
 else
   log "Run #$RUN_ID finished: $STATUS (exit $CODE)"
 fi

@@ -26,21 +26,14 @@ function launcherTail(lines = 4): string {
   }
 }
 
-export const PHASES = ["submit", "scan", "search", "prepare", "track"] as const;
-
-/**
- * The runs the app can start. The scan and the job search are separate runs (scripts/daily-run.sh --run):
- * scan is submit, scan the watchlist's careers sites, prepare and track; search is submit, the LinkedIn and
- * broad searches, and prepare.
- */
-export type RunKind = "scan" | "search" | "submit";
+export const PHASES = ["submit", "find", "prepare", "track"] as const;
 
 /**
  * Starts scripts/daily-run.sh in the background, the same script launchd runs, and waits for it to create its
  * run record, so a script that stops before then (the app not answering, a lock held, no token) reports why
  * instead of leaving the button looking like it did nothing.
  */
-export async function startAgentRun(kind: RunKind, trigger: "manual" | "submit-now"): Promise<{ ok: true; runId: number } | { ok: false; error: string }> {
+export async function startAgentRun(phase: string, trigger: "manual" | "submit-now"): Promise<{ ok: true; runId: number } | { ok: false; error: string }> {
   const running = activeRun();
   if (running) return { ok: false, error: `Run #${running.id} is still in progress.` };
   if (process.platform !== "darwin" && !process.env.JOBHUNT_ALLOW_NON_MAC) {
@@ -52,8 +45,8 @@ export async function startAgentRun(kind: RunKind, trigger: "manual" | "submit-n
   fs.mkdirSync(path.join(ROOT, "logs"), { recursive: true });
   const before = newestRunId();
   const out = fs.openSync(LAUNCHER_LOG, "a");
-  fs.writeSync(out, `[${iso()}] ${START_MARK} --run ${kind} --trigger ${trigger}\n`);
-  const child = spawn("/bin/bash", [script, "--run", kind, "--trigger", trigger], {
+  fs.writeSync(out, `[${iso()}] ${START_MARK} --phase ${phase} --trigger ${trigger}\n`);
+  const child = spawn("/bin/bash", [script, "--phase", phase, "--trigger", trigger], {
     cwd: ROOT,
     detached: true,
     stdio: ["ignore", out, out],
