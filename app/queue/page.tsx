@@ -54,6 +54,16 @@ export default function QueuePage() {
           </div>
         ) : null}
 
+        {approved.length ? (
+          <div className="banner ok apply-now">
+            <span>
+              {approved.length} approved {approved.length === 1 ? "job is" : "jobs are"} waiting to go out.{" "}
+              {running ? `They go out after run #${running.id} finishes.` : "Apply now, or they go out on the next scheduled run."}
+            </span>
+            <RunButton action={submitApprovedNow} label={`Apply to ${approved.length} approved now`} pendingLabel="Starting…" primary disabled={Boolean(running) || !profile.confirmed} doneMessage="Applying. Watch Chrome; the run log on the Pipeline updates as it goes." />
+          </div>
+        ) : null}
+
         {items.length === 0 ? (
           <div className="panel">
             <h2>Nothing to review</h2>
@@ -79,14 +89,6 @@ export default function QueuePage() {
             <dt>Skipped today</dt>
             <dd>{skipped.length}</dd>
           </dl>
-          {approved.length ? (
-            <div style={{ marginTop: 16 }}>
-              <RunButton action={submitApprovedNow} label={`Submit ${approved.length} approved now`} pendingLabel="Starting…" primary disabled={Boolean(running) || !profile.confirmed} />
-              <p className="small muted" style={{ marginTop: 6 }}>
-                Otherwise they go out on the next scheduled run.
-              </p>
-            </div>
-          ) : null}
         </div>
         <div className="panel">
           <h2>Search criteria</h2>
@@ -206,7 +208,7 @@ function QueueCard({ a, auto }: { a: AppWithJob; auto: boolean }) {
         ) : (
           <>
             <span className="done-text" style={{ color: a.stage === "approved" ? "var(--accent-text)" : "var(--ink-2)" }}>
-              {a.stage === "approved" ? "Approved. Submitting on next run." : `Skipped (${a.skipReason}). Similar postings will rank lower.`}
+              {a.stage === "approved" ? "Approved. Goes out when you apply to approved jobs, or on the next run." : `Skipped (${a.skipReason}). Similar postings will rank lower.`}
             </span>
             <form action={undoApplication.bind(null, a.id)}>
               <button className="btn" type="submit" style={{ padding: "10px 14px" }}>

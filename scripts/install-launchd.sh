@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs three launch agents:
 #   com.jobhunt.app     keeps the app running on 127.0.0.1:3000
-#   com.jobhunt.daily   runs scripts/daily-run.sh at 7:00 AM, Monday–Friday: the watchlist scan, then the job search
+#   com.jobhunt.daily   runs scripts/daily-run.sh at 7:00 AM, Monday–Friday
 #   com.jobhunt.update  runs scripts/auto-update.sh every 15 minutes (installs new commits on main)
 # launchd uses the Mac's local time zone; keep the Mac on Pacific time for 7:00 AM PT.
 #   scripts/install-launchd.sh            install / reinstall

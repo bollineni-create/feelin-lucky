@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db, schema } from "@/lib/db";
-import { changeStage, getApplication, hasMaterials, iso, logEvent } from "@/lib/logic";
+import { changeStage, getApplication, getProfile, hasMaterials, iso, logEvent } from "@/lib/logic";
 import { renderMaterials } from "@/lib/render";
 import { startAgentRun, stopAgentRun } from "@/lib/runner";
 import { HIGHLIGHTS, PRIORITIES, SOURCES, STAGES, type Highlight, type Priority, type Stage, type WorkEntry, type EducationEntry, type BroadSearch, type Source } from "@/db/schema";
@@ -50,14 +50,8 @@ export async function undoApplication(appId: number) {
   refresh();
 }
 
-export async function runScanNow() {
-  const r = await startAgentRun("scan", "manual");
-  refresh();
-  return r;
-}
-
-export async function runSearchNow() {
-  const r = await startAgentRun("search", "manual");
+export async function runNow() {
+  const r = await startAgentRun("all", "manual");
   refresh();
   return r;
 }
@@ -71,6 +65,8 @@ export async function stopRun() {
 }
 
 export async function submitApprovedNow() {
+  // The agent fills and submits nothing until the profile is confirmed, so a run now would do nothing.
+  if (!getProfile().confirmed) return { ok: false as const, error: "Confirm your profile in Settings first; nothing is submitted until then." };
   const r = await startAgentRun("submit", "submit-now");
   refresh();
   return r;
