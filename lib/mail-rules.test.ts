@@ -410,3 +410,119 @@ test("rules: an employer writing through LinkedIn or Indeed is kept, but not tru
   assert.equal(check("LinkedIn <jobs-noreply@linkedin.com>", "Your application was sent to Stripe", "Strategic Finance Manager").trusted, true);
   assert.equal(check("LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>", "Stripe is hiring: Strategic Finance Manager", "Stripe and 12 more companies are hiring. Would you like to schedule a call with a career coach?").kept, false);
 });
+
+// ---------- Regressions from the adversarial pass ----------
+
+test("adversarial: an invite inside an applicant system's 'thanks for applying' isn't a confirmation", () => {
+  const ashby = sender("Plaid <no-reply@ashbyhq.com>");
+  for (const body of [
+    "Thank you for applying to the Corporate Development Associate role at Plaid. As the next step in our hiring process, we would like to invite you to an interview with the hiring manager. Our recruiting coordinator will be in touch shortly with the details.",
+    "Thank you for applying. You've been selected as one of the top candidates, and we'd like to schedule a 30-minute call with the hiring manager.",
+    "Thank you for applying. We're inviting shortlisted candidates to a 30-minute intro call with our team, and we'd love for you to be one of them.",
+    "Thank you for applying to the Strategic Finance Associate role at Ramp. We'd like to bring you in to meet the team in person. Please let us know which dates work best for you.",
+    "Thank you for applying. You have been selected for a first-round conversation with our team.",
+    "Thank you for your application. Let me know when works for you to hop on the phone this week.",
+  ]) {
+    assert.equal(classify("Plaid - Corporate Development Associate", body, ashby).kind, "interview", body);
+  }
+  assert.equal(classify("Your application", "Thanks for applying. Please answer three short screening questions at the link below by Friday.", ashby).confident, false);
+  assert.equal(classify("Business Operations Manager at Figma", "Thanks for applying to the Business Operations Manager role! I'm the recruiter for this search. Do you have time for a quick call this week?", sender("Jane Lee <jane.lee@figma.com>")).kind, "interview");
+  // Template lines about the process stay template lines.
+  assert.deepEqual(classify("Thank you for applying", "Thank you for applying. Our hiring process typically includes a recruiter screen and two interviews. Questions? Please contact us.", ashby), { kind: "confirmation", confident: true });
+});
+
+test("adversarial: 'can't move forward' about a slot, a pause or a missing document doesn't close the application", () => {
+  const person = sender("Jane Smith <jane.smith@stripe.com>");
+  assert.deepEqual(classify("Strategic Finance Manager - update", "I wanted to give you a quick update on the Strategic Finance Manager role. Due to a budget freeze, we won't be moving forward with interviews for this role this quarter. Your application remains active, and I'll be in touch as soon as hiring resumes.", person), { kind: "rejection", confident: false });
+  assert.equal(classify("Update", "This role has been put on hold, so we are not moving forward with any candidates at this time. We'll keep your application on file and reach out as soon as the role reopens.", gh).confident, false);
+  assert.notEqual(classify("Treasury Manager - phone screen tomorrow", "Unfortunately, we won't be able to move forward with tomorrow's phone screen as planned, since I'm out sick. I'll reach out early next week with a new date.", person).kind, "rejection");
+  assert.notEqual(classify("Strategic Finance Manager - action needed", "We cannot proceed with your application without a copy of your unofficial transcript. Please reply to this email with your transcript attached.", person).kind, "rejection");
+  // Real rejections stay certain.
+  assert.deepEqual(classify("Update", "Unfortunately, we won't be moving forward with an interview. Your profile will remain active in our talent community.", gh), { kind: "rejection", confident: true });
+});
+
+test("adversarial: everyday rejection wordings are rejections", () => {
+  for (const line of [
+    "We have selected another candidate for this position.",
+    "We've chosen to move ahead with other candidates at this time.",
+    "Unfortunately, your application has not been shortlisted on this occasion.",
+    "Unfortunately, your application has not been successful on this occasion.",
+    "After careful review, we have decided to proceed with candidates whose experience more closely aligns with our needs.",
+    "We have offered the position to another candidate.",
+    "Regrettably, we are unable to take your application forward.",
+    "We have decided to continue with other candidates.",
+    "Unfortunately, we will not be inviting you to interview at this time.",
+  ]) {
+    assert.deepEqual(classify("Your application to Brex", `Thank you for applying to the Finance Manager role at Brex. ${line}`, gh), { kind: "rejection", confident: true }, line);
+  }
+  assert.notEqual(classify("Thanks", "Thank you for applying. Applicants who have not been selected will be notified.", gh).kind, "rejection");
+});
+
+test("adversarial: talent-community and job-alert sign-ups aren't applications", () => {
+  const workday = sender("Visa <visa@myworkday.com>");
+  assert.equal(classify("Thank you for joining our Talent Community", "Thank you for submitting your information to the Visa Talent Community for the Payments Strategy Manager position. Our recruiters will review your profile and contact you if there is a match.", workday).confident, false);
+  assert.equal(classify("Job alert created: Payments Strategy Manager", "Thank you for submitting your job alert. We will email you when new positions matching Payments Strategy Manager are posted.", workday).confident, false);
+  assert.equal(classify("Thank you for your application", "Thank you for applying to the Payments Strategy Manager position. We have received your application. In the meantime, join our Talent Community.", workday).confident, true);
+});
+
+test("adversarial: a platform's mail about other employers isn't about your application at that platform", () => {
+  const list: Candidate[] = [
+    { id: 100, stage: "approved", company: "LinkedIn", title: "Senior Financial Analyst", domains: [] },
+    { id: 101, stage: "applied", company: "Oracle", title: "Senior Financial Analyst", domains: ["oracle.com"] },
+    { id: 102, stage: "found", company: "Indeed", title: "Data Analyst", domains: [] },
+    { id: 103, stage: "applied", company: "JPMorgan Chase", title: "Treasury Analyst", domains: ["jpmorganchase.com"] },
+  ];
+  const m = (raw: string, subject: string, body: string) => matchEmail({ sender: sender(raw), subject, body }, list).applicationId;
+  assert.equal(m("LinkedIn <jobs-noreply@linkedin.com>", "Naren, your application was sent to Plaid", "Your application was sent to Plaid\n\nSenior Financial Analyst\nPlaid · San Francisco, CA (Hybrid)"), null);
+  // JPMorgan's mail through Oracle's applicant system: a suggestion for JPMorgan's one application, not Oracle's.
+  const orc = matchEmail({ sender: sender("JPMorgan Chase <hdjq.fa.sender@workflow.mail.us2.cloud.oracle.com>"), subject: "Update on your application", body: "Thank you for your interest in the Senior Financial Analyst position at JPMorgan Chase." }, list);
+  assert.deepEqual([orc.applicationId, orc.matchedBy], [103, "company"]);
+  assert.equal(m("Indeed Apply <indeedapply@indeed.com>", "Indeed Application: Data Analyst", "Your application has been submitted. Good luck!\n\nData Analyst\nAcme Health - Austin, TX"), null);
+  assert.equal(m("JPMorgan Chase <hdjq.fa.sender@workflow.mail.us2.cloud.oracle.com>", "Your application", "Thank you for applying to the Treasury Analyst position at JPMorgan Chase."), 103);
+});
+
+test("adversarial: '___, Payments' and '___ - Payments' are other jobs; '___ - San Francisco' and '___, Stripe' aren't", () => {
+  const list: Candidate[] = [{ id: 110, stage: "applied", company: "Stripe", title: "Product Manager", domains: ["stripe.com"] }];
+  const by = (subject: string, body: string) => matchEmail({ sender: gh, subject, body }, list).matchedBy;
+  assert.notEqual(by("Your application to Stripe", "Thank you for applying for the Product Manager, Payments role at Stripe. Unfortunately, we have decided to move forward with other candidates."), "title");
+  assert.notEqual(by("Your application to Stripe", "Thank you for applying for the Product Manager - Payments role."), "title");
+  for (const subject of ["Product Manager - Stripe", "Product Manager - San Francisco, CA", "Product Manager, Remote (US)", "Stripe | Product Manager - R12345", "Product Manager (R12345) - Stripe"]) {
+    assert.equal(by(subject, "Thanks for applying."), "title", subject);
+  }
+  const both: Candidate[] = [...list, { id: 111, stage: "found", company: "Stripe", title: "Product Manager, Payments", domains: ["stripe.com"] }];
+  assert.equal(matchEmail({ sender: gh, subject: "Your application to Stripe", body: "Thank you for applying for the Product Manager, Payments role." }, both).applicationId, 111);
+});
+
+test("adversarial: titles listed as other openings or quoted from an earlier message don't count", () => {
+  const list: Candidate[] = [
+    { id: 120, stage: "applied", company: "Stripe", title: "Strategic Finance Manager", domains: ["stripe.com"] },
+    { id: 121, stage: "found", company: "Stripe", title: "Treasury Analyst", domains: ["stripe.com"] },
+  ];
+  const listed = matchEmail({ sender: gh, subject: "Your application to Stripe", body: "Hi Naren,\n\nThank you for your interest in Stripe and for applying to the Treasury Analyst role. After careful consideration, we have decided to move forward with other candidates whose experience more closely matches our needs.\n\nWe'd encourage you to take a look at some of our other open roles that may be a fit:\nStrategic Finance Manager\nSenior Accountant, Revenue\n\nBest,\nStripe Recruiting" }, list);
+  assert.deepEqual([listed.applicationId, listed.matchedBy], [121, "title"]);
+  const quoted = matchEmail({ sender: sender("Jane Smith <jane.smith@stripe.com>"), subject: "Re: your application", body: "Hi Naren,\n\nThanks for following up. Unfortunately, the hiring team has decided not to move forward with your application for the Treasury Analyst role.\n\nBest,\nJane\n\nOn Mon, Oct 19, 2026 at 9:14 AM Naren <naren@example.com> wrote:\n> Hi Jane, I also applied to the Strategic Finance Manager role last week." }, list);
+  assert.deepEqual([quoted.applicationId, quoted.matchedBy], [121, "title"]);
+});
+
+test("adversarial: a company that only resembles yours doesn't vouch for it", () => {
+  const list: Candidate[] = [
+    { id: 130, stage: "applied", company: "Block", title: "Financial Analyst", domains: ["block.xyz"] },
+    { id: 131, stage: "approved", company: "Mercury", title: "Senior Financial Analyst", domains: [] },
+    { id: 132, stage: "applied", company: "Ramp", title: "Financial Analyst", domains: [] },
+  ];
+  const t = (raw: string, subject: string, body: string) => matchEmail({ sender: sender(raw), subject, body }, list).trusted;
+  assert.equal(t("H&R Block <hrblock@myworkday.com>", "Your application to H&R Block", "Thank you for your interest in the Financial Analyst position at H&R Block."), false);
+  assert.equal(t("Mercury Systems <mrcy@myworkday.com>", "Thank you for applying to Mercury Systems", "Thank you for applying for the Senior Financial Analyst position at Mercury Systems."), false);
+  assert.equal(t("Anna Kowalska <anna.kowalska@ramp.network>", "Financial Analyst - Ramp Network", "Thank you for taking the time to apply for the Financial Analyst position."), false);
+  assert.equal(t("Ramp Talent Acquisition <hr@ramp.careers>", "Interview Invitation - Financial Analyst", "We would like to invite you to an online interview for the Financial Analyst position."), false);
+  // The real ones still do.
+  assert.equal(t("Ramp Recruiting <no-reply@ashbyhq.com>", "Thanks for applying to Ramp", "We received your application for Financial Analyst."), true);
+  assert.equal(t("Ramp <talent@ramp.com>", "Financial Analyst", "Thanks for applying."), true);
+  assert.equal(t("Block <no-reply@block.xyz>", "Financial Analyst", "Thanks for applying."), true);
+});
+
+test("adversarial: assessment tools are kept and read as tests; Indeed's relayed employer mail doesn't vouch", () => {
+  assert.equal(classify("Stripe has invited you to an assessment", "Hello", sender("Criteria <noreply@criteriacorp.com>")).kind, "assessment");
+  const list: Candidate[] = [{ id: 140, stage: "applied", company: "Stripe", title: "Strategic Finance Manager", domains: ["stripe.com"] }];
+  assert.equal(matchEmail({ sender: sender("Stripe <employer-reply@indeedemail.com>"), subject: "Strategic Finance Manager at Stripe", body: "Can you interview tomorrow?" }, list).trusted, false);
+});

@@ -38,11 +38,11 @@ export const ATS_DOMAINS = [
   "rippling.com", "teamtailor.com", "teamtailor-mail.com", "pinpointhq.com", "comeet.co", "gem.com", "personio.com",
   "personio.de", "cloud.oracle.com", "dover.io", "dayforce.com", "hackerrank.com", "hackerrankforwork.com", "codesignal.com",
   "codility.com", "hirevue.com", "modernhire.com", "vidcruiter.com", "karat.io", "karat.com", "goodtime.io", "modernloop.io",
-  "paradox.ai",
+  "paradox.ai", "criteriacorp.com", "shl.com", "testgorilla.com", "sparkhire.com", "harver.com", "yello.co",
 ];
 
 /** Tools whose mail is an assessment or a recorded interview to complete. */
-const ASSESSMENT_DOMAINS = ["hackerrank.com", "hackerrankforwork.com", "codesignal.com", "codility.com", "hirevue.com", "modernhire.com", "vidcruiter.com", "karat.io", "karat.com"];
+const ASSESSMENT_DOMAINS = ["hackerrank.com", "hackerrankforwork.com", "codesignal.com", "codility.com", "hirevue.com", "modernhire.com", "vidcruiter.com", "karat.io", "karat.com", "criteriacorp.com", "shl.com", "testgorilla.com", "sparkhire.com", "harver.com"];
 
 /**
  * Account and security mail from the same systems ("verify your candidate account", "confirm your identity for job
@@ -94,11 +94,17 @@ const hypothetical = (s: string) => {
 
 // About candidates in general: "We'll contact qualified candidates to schedule interviews", "Applicants who are not
 // selected will be notified". "Other candidates who…" is about the ones chosen instead of you.
-const GENERAL_PEOPLE = /\b(?:qualified|selected|shortlisted|successful|top|all) (?:candidates|applicants)\b|(?<!\b(?:other|another) )\b(?:candidates|applicants|those|individuals|anyone|everyone)\b(?: \w+){0,3}? (?:who|whose|that|not|selected)\b/i;
+const GENERAL_PEOPLE = /\b(?:qualified|selected|shortlisted|successful|top|all) (?:candidates|applicants)\b|(?<!\b(?:other|another) |\b(?:proceed|continue|go) with )\b(?:candidates|applicants|those|individuals|anyone|everyone)\b(?: \w+){0,3}? (?:who|whose|that|not|selected)\b/i;
 const GENERAL = new RegExp(`${GENERAL_PEOPLE.source}|\\b(?:our|the) (?:interview|hiring|recruiting|selection|application) process\\b`, "i");
 // Thanks for something already done: "Thanks for speaking with me on our call last week", "Thank you for completing the
 // HireVue interview". It asks for nothing now.
 const PAST = /\bthank(?:s| you)(?: so much| again)? for (?:\w+ ){0,2}?(?:speaking|meeting|talking|chatting|taking|completing|interviewing|participating|attending|joining|connecting|sharing|submitting|finishing|your time)\b/i;
+
+// Said to you, whatever else the sentence mentions: "As the next step in our hiring process, we would like to invite
+// you to an interview", "You've been selected as one of the top candidates".
+const TO_YOU =
+  /\b(?:we|i)(?:'d| would) (?:like|love) (?:to (?:invite|bring|meet|speak|talk|chat|connect|learn|get to know|hear from|schedule|set up|arrange|move|have you|see you|discuss)|for you)\b|\b(?:invite|inviting) you\b|\byou(?:'ve| have)? been (?:selected|shortlisted|invited)\b|\bone of (?:the|our) (?:top|selected|shortlisted)\b|\blet (?:me|us) know (?:when|what|which|a |your|how)\b|\b(?:please|kindly) (?:answer|send|upload|submit|provide|attach|fill (?:out|in))\b|\b(?:hop|jump) on (?:a|the) (?:quick )?(?:phone|call)\b|\b(?:progressed|advanced|moved (?:on|forward)) to the next\b|\bwants? to (?:set up|meet|speak|talk|chat)\b|\bto (?:arrange|schedule|book|set up) a time\b/i;
+const general = (s: string) => GENERAL.test(s) && !TO_YOU.test(s);
 
 const anyIn = (res: RegExp[], text: string) => res.some((re) => re.test(text));
 /**
@@ -106,7 +112,7 @@ const anyIn = (res: RegExp[], text: string) => res.some((re) => re.test(text));
  * candidates in general, and not thanks for something already done.
  */
 const says = (res: RegExp[], text: string, ask = false) =>
-  sentences(text).some((s) => !hypothetical(s) && !(ask && (GENERAL.test(s) || PAST.test(s))) && anyIn(res, s));
+  sentences(text).some((s) => !hypothetical(s) && !(ask && (general(s) || PAST.test(s))) && anyIn(res, s));
 
 const REJECTION = [
   /\bnot (?:to |be )?(?:move|moving) forward\b/i,
@@ -129,15 +135,28 @@ const REJECTION = [
   /\b(?:application|candidacy) (?:was|has been|is) (?:declined|rejected|unsuccessful)\b|\bwere unsuccessful\b/i,
   /\bdecline your application\b/i,
   /\b(?:go|going) (?:in|with) a different direction\b/i,
+  /\b(?:selected|chosen|hired|offered (?:the|this) (?:position|role|job) to|offered to) (?:another|a different|other) (?:candidates?|applicants?|individuals?|person)\b/i,
+  /\bmov(?:e|ing) (?:ahead|on) with (?:other|another|a different) (?:candidates?|applicants?)\b/i,
+  /\b(?:decided|chosen|chose|elected) to (?:proceed|continue|go) with (?:other |another )?(?:candidates?|applicants?)\b/i,
+  /\b(?:has|have) not been (?:shortlisted|successful)\b/i,
+  /\b(?:not|won't|will not|unable to) (?:be )?(?:inviting|invite) you (?:to|for) (?:an? )?interview\b/i,
+  /\b(?:unable to|not able to|won't|will not|can't|cannot) (?:be )?(?:take|taking) your (?:application|candidacy) (?:any )?(?:forward|further)\b/i,
 ];
 // A rejection is said to you, or as a decision: "your application", "we have decided", "unfortunately, the team…".
 // "Applicants who were not selected will be notified" is neither.
 const ADDRESSED = /\b(?:you|your|yours|we|us|our|unfortunately|regret|regrettably|sadly)\b|\b(?:has|have|had) (?:decided|chosen|made)\b/i;
 const YOU = /\b(?:you|your|yours)\b/i;
+// "We cannot proceed with your application without your transcript" asks for a document; it isn't a decision.
 const rejects = (text: string) =>
   wholeSentences(text).some(
-    (sentence) => ADDRESSED.test(sentence) && clauses(sentence).some((s) => !hypothetical(s) && !(GENERAL_PEOPLE.test(s) && !YOU.test(s)) && anyIn(REJECTION, s)),
+    (sentence) =>
+      ADDRESSED.test(sentence) &&
+      clauses(sentence).some((s) => !hypothetical(s) && !/\bwithout\b/i.test(s) && !(GENERAL_PEOPLE.test(s) && !YOU.test(s)) && anyIn(REJECTION, s)),
   );
+// The search paused or moved, with you still in it: "won't be moving forward with interviews this quarter (budget
+// freeze); your application remains active". A rejection that says so is only a guess.
+const STILL_OPEN =
+  /\b(?:on hold|(?:hiring|budget) freeze|(?:application|candidacy) (?:is still|stays) (?:active|open|under (?:review|consideration))|remains (?:active|open|under (?:review|consideration))|keep(?:ing)? your (?:application|candidacy) (?:active|open) for the|(?:hiring|the (?:role|search|position)) (?:resumes|reopens|re-opens)|forward with scheduling)\b/i;
 
 const OFFER = [
   /\boffer letter\b/i,
@@ -176,7 +195,8 @@ const INTERVIEW = [
   /\b(?:book|pick|select|choose) (?:a |your )?(?:time|slot|interview time)\b/i,
   /\b(?:find|grab|have|get) (?:\d+|a few|some) (?:minutes|mins)\b/i,
   /\b\d+[- ]?min(?:ute)?s?\b.{0,20}\b(?:call|chat|conversation|interview|meeting|screen|zoom|video)\b/i,
-  /\bwork for you\b|\bwhat (?:times?|days?) (?:work|would work|are good|suit)\b|\btimes? that (?:work|suit)s?\b/i,
+  /\bworks? for you\b|\bwhat (?:times?|days?) (?:work|would work|are good|suit)\b|\btimes? that (?:work|suit)s?\b/i,
+  /\b(?:hop|jump) on (?:a|the) (?:quick )?(?:phone|call)\b|\b(?:like|love|want)s? to (?:bring you in|have you (?:in|back|come in)|set up a conversation)\b|\b(?:first|1st)[- ]round\b|\bsuperday\b|\b(?:selected|shortlisted) for (?:an? |the )?(?:next|first|final|interview|conversation)|\b(?:do|would) you have (?:some |any )?time (?:for|to|this|next|on)\b|\bwould you be (?:available|free) (?:for|to|on|this|next|tomorrow)\b|\bquick (?:call|chat|phone call)\b/i,
   /\b(?:does|would|will) (?:monday|tuesday|wednesday|thursday|friday|tomorrow|next week|this week)\b.{0,40}\bwork\b/i,
   /\b(?:phone|recruiter|initial|intro|introductory|screening) (?:screen|call|conversation|interview|chat)\b/i,
   /\binvite you (?:to|for) (?:an? |the )?(?:interview|call|chat|conversation|phone screen|next round|onsite|virtual)/i,
@@ -196,7 +216,9 @@ const REQUEST = [
   /\b(?:please|kindly) (?:complete|take|finish|schedule|book|select|choose|pick|confirm|sign|record|review and (?:sign|accept))\b/i,
   /\b(?:schedule|set up|arrange|book|find|grab|pick|select|choose) (?:a|an|some|your|the) (?:new )?(?:time|call|chat|interview|conversation|meeting|screen|slot)\b/i,
   /\breschedul/i,
-  /\bwork for you\b|\bwhat (?:times?|days?) (?:work|would work|are good)\b|\btimes? that works?\b/i,
+  /\bworks? for you\b|\bwhat (?:times?|days?) (?:work|would work|are good)\b|\btimes? that works?\b/i,
+  // A slot that fell through: "unable to move forward with tomorrow's phone screen as planned; I'll send a new date".
+  /\b(?:new|another|different) (?:date|time|day)s?\b|\bpostpon\w*|\bas (?:planned|scheduled)\b/i,
 ];
 
 // Words that point at a request the phrasings above don't know: "The next step is an assessment", "log in to review
@@ -224,6 +246,9 @@ const CONFIRMATION = [
   /\bwe(?:'ll| will) (?:review|be reviewing|carefully review) your (?:application|qualifications|background|resume|experience)\b/i,
 ];
 
+// Joining a talent community or setting up a job alert, which names the job but isn't applying to it.
+const NOT_APPLIED = /\bthank(?:s| you) for (?:joining|signing up|subscribing|submitting your (?:information|profile|job alert))\b|\bwelcome to (?:our|the) (?:[\w&'-]+ )?talent (?:community|network|pool)\b|\bjob alert\b/i;
+
 // Rejections open this way too, so on its own it's a guess, not a confirmation.
 const WEAK_CONFIRMATION = [/\bthank(?:s| you) for (?:your )?interest in\b/i];
 
@@ -245,12 +270,13 @@ const SLOT = /\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b|\b\d{1,2}(?::\d{2})
 const STAMP = /\b(?:submitted|received|applied|sent|dated?|posted)\b/i;
 const NUDGE = /\b(?:call|chat|zoom|video|record|questionnaire|test|minutes?|link below|calendar|schedul\w*|availab\w*|interview\w*|assessment|book|reply (?:to|with)|respond (?:to|with|by)|complete (?:the|this|your|a|an|our))\b|\?$/i;
 const quiet = (text: string) =>
-  sentences(text).every((s) => hypothetical(s) || GENERAL.test(s) || FOOTER.test(s) || !(NUDGE.test(s) || (SLOT.test(s) && !STAMP.test(s))));
+  sentences(text).every((s) => hypothetical(s) || (!TO_YOU.test(s) && (GENERAL.test(s) || FOOTER.test(s) || !(NUDGE.test(s) || (SLOT.test(s) && !STAMP.test(s))))));
 
 // A job board passing on a message from someone ("Jane via LinkedIn", "New message from Stripe"): anyone can send one.
 const BOARD_MESSAGE = /\b(?:messaged you|new message|sent you a (?:new )?message|inmail|interview (?:request|invitation|invite)|invited you to (?:an? )?interview|wants to (?:interview|schedule)|would like to (?:interview|schedule))\b/i;
+// (Indeed relays an employer's own messages from indeedemail.com.)
 const relayed = (sender: Sender | undefined, subject: string) =>
-  Boolean(sender && jobBoardOf(sender.domain) && (/\bvia\b/i.test(sender.name ?? "") || BOARD_MESSAGE.test(subject)));
+  Boolean(sender && jobBoardOf(sender.domain) && (/\bvia\b/i.test(sender.name ?? "") || BOARD_MESSAGE.test(subject) || domainIs(sender.domain, "indeedemail.com")));
 // Mailboxes no one writes from by hand.
 const TEAM_MAILBOX = /^(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|notify|auto[-_.]?(?:reply|mailer|mated)|mailer|careers?|jobs?|recruit(?:ing|ment|ers?)?|talent(?:[-_.]?acquisition)?|hiring|applications?|apply|hr|people|candidates?|ta)(?:[-_.+]|$)/i;
 
@@ -281,14 +307,14 @@ export function classify(subject: string | null | undefined, body: string | null
   const interview = says(INTERVIEW, text, true);
   // A rejection that asks for nothing is certain. One that also asks to talk, test or sign is a reschedule or offer
   // paperwork ("unable to proceed with Tuesday's interview; could you share your availability?").
-  if (rejects(text) && !offer && !says(REQUEST, text, true)) return { kind: "rejection", confident: true };
+  if (rejects(text) && !offer && !says(REQUEST, text, true)) return { kind: "rejection", confident: !STILL_OPEN.test(text) };
   if (offer) return { kind: "offer", confident: false };
   if (assessment) return { kind: "assessment", confident: false };
   if (interview) return { kind: "interview", confident: false };
   const pointed = POINTS_TO.find(([, re]) => says([re], text, true));
   if (pointed) return { kind: pointed[0], confident: false };
   const template = systemSender(sender, subject ?? "") && quiet(text);
-  if (says(CONFIRMATION, text)) return { kind: "confirmation", confident: template };
+  if (says(CONFIRMATION, text)) return { kind: "confirmation", confident: template && !NOT_APPLIED.test(text) };
   if (anyIn(WEAK_CONFIRMATION, text)) return { kind: "confirmation", confident: false };
   if (says(UPDATE, text)) return { kind: "update", confident: template && !PORTAL.test(text) };
   return { kind: "other", confident: false };
@@ -360,17 +386,23 @@ type CompanyHit = "domain" | "name" | "body" | null;
  * the body. The body is matched case-sensitively, so "Block" the company isn't "block your calendar".
  */
 function companyHit(c: Candidate, sender: Sender, subject: string, body: string): CompanyHit {
+  // What an applicant system or job board sends about other employers isn't about it as an employer: LinkedIn's "your
+  // application was sent to Plaid" isn't about your LinkedIn application, nor Oracle Recruiting Cloud mail from
+  // JPMorgan about your Oracle one.
+  const vendor = (atsOf(sender.domain) ?? jobBoardOf(sender.domain))?.split(".").slice(0, -1) ?? [];
+  const aliases = companyAliases(c.company).filter((a) => !vendor.some((l) => l === slug(a) || (slug(a).length >= 5 && l.includes(slug(a)))));
+  if (!aliases.length) return null;
   if (sender.domain && c.domains.some((d) => domainIs(sender.domain, d))) return "domain";
-  const aliases = companyAliases(c.company);
   // Workday sends from <company>@myworkday.com, iCIMS from <company>+autoreply@talent.icims.com, Jobvite and
   // Teamtailor from a company subdomain (jobvite.nutanix.com, acme.teamtailor-mail.com).
   const ats = Boolean(atsOf(sender.domain));
   const local = ats ? slug(sender.address?.split("@")[0]?.split("+")[0] ?? "") : "";
-  // At an applicant system any label can be the tenant (acme.teamtailor-mail.com); elsewhere only the registrable
-  // one counts, so mail.visa.com is Visa and visa.example-mailer.com isn't.
+  // At an applicant system any label can be the tenant (acme.teamtailor-mail.com). Elsewhere only the registrable one
+  // counts, and only under .com or a country's .co.uk-style suffix (the company's own domain is matched above): so
+  // mail.visa.com is Visa, and visa.example-mailer.com, ramp.network and stripe.careers aren't.
   const parts = (sender.domain ?? "").split(".");
   const n = parts.length >= 3 && /^(?:co|com|org|net|gov|ac)$/.test(parts[parts.length - 2]) && parts[parts.length - 1].length === 2 ? 3 : 2;
-  const labels = jobBoardOf(sender.domain) ? [] : ats ? parts : parts.slice(-n, -n + 1);
+  const labels = jobBoardOf(sender.domain) ? [] : ats ? parts : parts[parts.length - 1] === "com" || n === 3 ? parts.slice(-n, -n + 1) : [];
   if (aliases.some((a) => slug(a).length >= 4 && (local === slug(a) || labels.includes(slug(a))))) return "domain";
   if (aliases.some((a) => (sender.name && wordRe(a, "i").test(sender.name)) || wordRe(a).test(subject))) return "name";
   if (aliases.some((a) => wordRe(a).test(body))) return "body";
@@ -379,7 +411,10 @@ function companyHit(c: Candidate, sender: Sender, subject: string, body: string)
 
 const TITLE_STOP = new Set(["and", "of", "the", "for", "to", "in", "at", "an", "with", "on", "remote", "hybrid", "onsite", "us", "usa", "ii", "iii", "iv", "job", "role", "position", "full", "time"]);
 
-/** Lowercase words, with "|" where punctuation ends a phrase: "Sr. Analyst, Treasury (Remote)" → senior | analyst | treasury |. */
+/**
+ * Lowercase words, with "|" where punctuation ends a phrase and "," for a comma or spaced dash, which may join a title's
+ * parts or end it: "Sr. Analyst, Treasury (Remote)" → senior analyst , treasury |.
+ */
 function titleTokens(t: string): string[] {
   return t
     .toLowerCase()
@@ -388,28 +423,32 @@ function titleTokens(t: string): string[] {
     .replace(/\bsr\b\.?/g, "senior")
     .replace(/\bjr\b\.?/g, "junior")
     .replace(/\bmgr\b\.?/g, "manager")
-    .replace(/[,;:!?|/[\]"“”()]+|\s[-–—]+\s|\.(?=\s|$)|\n/g, " | ")
-    .replace(/[^a-z0-9|]+/g, " ")
+    .replace(/\s*,\s*|\s[-–—]+\s/g, " , ")
+    .replace(/[;:!?|/[\]"“”()]+|\.(?=\s|$)|\n/g, " | ")
+    .replace(/[^a-z0-9|,]+/g, " ")
     .split(/\s+/)
     .filter(Boolean);
 }
-const titleWords = (t: string) => titleTokens(t).filter((w) => w !== "|" && w.length >= 2 && !TITLE_STOP.has(w));
+const titleWords = (t: string) => titleTokens(t).filter((w) => w !== "|" && w !== "," && w.length >= 2 && !TITLE_STOP.has(w));
 
 // Words that may stand right before or after a job title without making it a different one: "for the ___ role",
 // "Application: ___", "___ at Stripe". "Senior" before or "Sales" after it does ("Senior ___", "___ Sales").
 const TITLE_BEFORE = new Set(["the", "a", "an", "our", "your", "my", "this", "that", "for", "as", "to", "of", "in", "at", "on", "with", "about", "regarding", "re", "fwd", "fw", "position", "role", "job", "opening", "opportunity", "title", "application", "applying", "applied", "interview", "interviewing", "req", "requisition", "s", "is", "was", "new", "open", "into", "candidate", "candidacy", "from", "by", "update", "status", "offer", "assessment", "screen", "remote", "hybrid", "onsite", "contract", "time"]);
 const TITLE_AFTER = new Set(["role", "roles", "position", "positions", "job", "opening", "opportunity", "posting", "vacancy", "req", "requisition", "at", "with", "in", "for", "on", "and", "or", "has", "have", "was", "were", "is", "are", "will", "would", "we", "you", "your", "our", "the", "a", "an", "to", "from", "by", "which", "that", "this", "here", "there", "it", "if", "but", "so", "as", "i", "my", "me", "us", "please", "thank", "thanks", "application", "applied", "interview", "interviews", "candidacy", "hi", "hello", "dear", "remote", "hybrid", "onsite", "located", "based", "via", "posted", "id", "team", "reference", "ref"]);
 const boundary = (w: string | undefined, allowed: Set<string>) => w === undefined || w === "|" || allowed.has(w) || /\d/.test(w);
+// What may follow a title after a comma or dash without making it a longer one: a place or a kind of contract
+// ("___, Remote", "___ - San Francisco"), the company, or a req number. "___, Payments" is another job.
+const PLACE = new Set(["remote", "hybrid", "onsite", "on", "in", "office", "us", "usa", "united", "new", "san", "los", "nyc", "sf", "la", "uk", "london", "seattle", "austin", "boston", "chicago", "denver", "atlanta", "toronto", "dallas", "miami", "washington", "dc", "ny", "ca", "tx", "wa", "ma", "il", "ga", "emea", "apac", "americas", "north", "south", "east", "west", "central", "bay", "global", "canada", "europe", "india", "multiple", "various", "nationwide", "virtual", "full", "part", "contract", "temporary", "permanent"]);
 
-/** The title as written, standing on its own: not inside a longer title ("Senior ___", "___ Sales"). */
-function standsAlone(text: string[], title: string[]): boolean {
+/** The title as written, standing on its own: not inside a longer title ("Senior ___", "___ Sales", "___, Payments"). */
+function standsAlone(text: string[], title: string[], company: Set<string>): boolean {
   if (!title.length) return false;
   for (let i = 0; i < text.length; i++) {
     if (text[i] !== title[0]) continue;
     let j = i;
     let k = 0;
     while (j < text.length && k < title.length) {
-      if (text[j] === "|") {
+      if (text[j] === "|" || text[j] === ",") {
         j++;
         continue;
       }
@@ -417,7 +456,9 @@ function standsAlone(text: string[], title: string[]): boolean {
       j++;
       k++;
     }
-    if (k === title.length && boundary(text[i - 1], TITLE_BEFORE) && boundary(text[j], TITLE_AFTER)) return true;
+    if (k < title.length || !boundary(text[i - 1] === "," ? "|" : text[i - 1], TITLE_BEFORE)) continue;
+    const after = text[j] === "," ? boundary(text[j + 1], TITLE_AFTER) || PLACE.has(text[j + 1]) || company.has(text[j + 1]) : boundary(text[j], TITLE_AFTER);
+    if (after) return true;
   }
   return false;
 }
@@ -430,11 +471,23 @@ const OTHER_OPENINGS = /\b(?:other|similar|more|additional|related|future|open|n
  * nearly all of the title's words in some order ("Manager, Strategic Finance", or "Senior Strategic Finance Manager"),
  * which is only a suggestion.
  */
-function titleHit(title: string, subject: string, body: string): "exact" | "words" | null {
-  const top = sentences(body.slice(0, 1200)).filter((s) => !OTHER_OPENINGS.test(s));
+function titleHit(title: string, subject: string, body: string, company: string[] = []): "exact" | "words" | null {
+  // Only the email's own words: not the earlier messages quoted under a reply, nor the lines listed under "Other open
+  // roles that may be a fit:".
+  const own = body.split(/\n\s*(?:>|On [^\n]{0,200}wrote:|-{2,}\s*(?:Original|Forwarded) Message|From: )/)[0];
+  const top: string[] = [];
+  let listing = false;
+  for (const s of sentences(own.slice(0, 1200))) {
+    if (OTHER_OPENINGS.test(s)) listing = /:$/.test(s);
+    else if (!listing || /[.!?]$/.test(s)) {
+      listing = false;
+      top.push(s);
+    }
+  }
   const text = titleTokens(`${subject}\n${top.join("\n")}`);
-  const t = titleTokens(title).filter((w) => w !== "|");
-  if (t.join(" ").length >= 4 && standsAlone(text, t)) return "exact";
+  const t = titleTokens(title).filter((w) => w !== "|" && w !== ",");
+  const names = new Set(company.map((a) => titleTokens(a)[0]).filter(Boolean));
+  if (t.join(" ").length >= 4 && standsAlone(text, t, names)) return "exact";
   // Two words ("Product Manager") show up in too many emails to count without the title as written.
   const words = titleWords(title);
   if (words.length < 3) return null;
@@ -449,11 +502,19 @@ function titleHit(title: string, subject: string, body: string): "exact" | "word
  * "company", which the app only suggests). Anything else is left for the agent or you, with the applications it could
  * be about.
  */
+// "Stripe", "Stripe Recruiting", "LMI @ icims": an applicant system's display name that is the company. "H&R Block" isn't
+// Block, nor "Square Enix" Square.
+const TEAM_TAIL = /\s*(?:@|\bvia\b).*$|(?:\s+(?:university |campus )?(?:recruiting|recruitment|careers?|talent(?: acquisition)?|hiring(?: team)?|jobs|hr|people|team))+$/i;
+const tenant = (name: string | null, c: Candidate) => {
+  const own = new Set(companyAliases(c.company).map((a) => a.toLowerCase()));
+  return companyAliases((name ?? "").replace(TEAM_TAIL, "").trim()).some((a) => own.has(a.toLowerCase()));
+};
+
 export function matchEmail(e: { sender: Sender; subject: string; body: string }, candidates: Candidate[]): Match & Seen {
   const subject = plain(e.subject);
   const body = plain(e.body);
   const hits = candidates.map((c) => ({ c, co: companyHit(c, e.sender, subject, body) })).filter((h) => h.co);
-  const titledAll = hits.map((h) => ({ ...h, t: titleHit(h.c.title, subject, body) })).filter((h) => h.t);
+  const titledAll = hits.map((h) => ({ ...h, t: titleHit(h.c.title, subject, body, companyAliases(h.c.company)) })).filter((h) => h.t);
   const bySender = (h: { co: CompanyHit }) => h.co === "domain" || h.co === "name";
   const titled = titledAll.filter(bySender);
   const live = (h: { c: Candidate }) => LIVE_STAGES.includes(h.c.stage);
@@ -469,7 +530,9 @@ export function matchEmail(e: { sender: Sender; subject: string; body: string },
     senderNamed: hits.some(bySender),
     senderNamedLive: hits.some((h) => bySender(h) && live(h)),
     titleNamed: titledAll.length > 0,
-    trusted: fromSystem || hits.some((h) => h.c.id === applicationId && h.co === "domain"),
+    trusted: applicationId
+      ? hits.some((h) => h.c.id === applicationId && (h.co === "domain" || (h.co === "name" && (atsOf(e.sender.domain) ? tenant(e.sender.name, h.c) : fromSystem))))
+      : fromSystem,
   });
 
   const pick = (pool: typeof titled, by: Match["matchedBy"]) => {
