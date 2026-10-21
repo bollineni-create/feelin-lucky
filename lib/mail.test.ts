@@ -170,7 +170,9 @@ test("you settle the Stripe and Plaid ones; the next check files them, out of Ju
   assert.equal(M.toReviewCount(), 0);
   const r = await M.checkMail({ launch: true });
   assert.ok(r.ok);
-  assert.equal(r.summary.filed, 2);
+  // Yours is filed; the agent's reading never moves an email out of the inbox.
+  assert.equal(r.summary.filed, 1);
+  assert.equal(emailBy("An update on your application")!.filedTo, null);
   const icloud = mailState().accts.find((a) => a.name === "iCloud")!;
   const filed = icloud.boxes.find((b) => b.name === "Lodestar")!.msgs.find((m) => m.messageId === "i1@stripe")!;
   assert.equal(filed.junk, false);
@@ -288,4 +290,29 @@ test("mail an account downloads late, with an older date, is still read", async 
   });
   assert.ok((await M.checkMail()).ok);
   assert.ok(emailBy("Late arrival"));
+});
+
+test("a scam 'interview' in Junk stays in Junk, unflagged; a spoofed sender changes nothing on its own", async () => {
+  setMail((s) => {
+    const junk = s.accts[1].boxes.find((b) => b.name === "Junk")!;
+    junk.msgs.push({ id: s.nextId++, messageId: "scam@x", sender: "HR Recruitment Team <hr.recruit.dept2026@outlook.com>", subject: "Interview Invitation - Remote Data Entry Position", date: hoursAgo(1), content: "We invite you for an online interview. Add our hiring manager on Telegram.", flagged: false, junk: true, deleted: false, box: junk });
+    const inbox = s.accts[0].boxes[0];
+    inbox.msgs.push({ id: s.nextId++, messageId: "spoof@x", sender: "Visa Recruiting <visa.careers.team@gmail.com>", subject: "Your application for Treasury Manager", date: hoursAgo(1), content: "Thank you for applying. Unfortunately, we have decided to move forward with other candidates.", flagged: false, junk: false, deleted: false, box: inbox });
+  });
+  const before = app("visa-tm").stage;
+  assert.ok((await M.checkMail({ launch: true })).ok);
+  const scam = mailState().accts[1].boxes.find((b) => b.name === "Junk")!.msgs.find((m) => m.messageId === "scam@x")!;
+  assert.equal(scam.junk, true);
+  assert.equal(scam.flagged, false);
+  assert.equal(emailBy("Your application for Treasury Manager")!.status, "review");
+  assert.equal(app("visa-tm").stage, before);
+});
+
+test("payslips and benefits mail from an HR system aren't kept", async () => {
+  setMail((s) => {
+    const inbox = s.accts[0].boxes[0];
+    inbox.msgs.push({ id: s.nextId++, messageId: "pay@x", sender: "Stripe <stripe@myworkday.com>", subject: "Your payslip for October is available", date: hoursAgo(1), content: "Net pay: $5,000. View your payslip.", flagged: false, junk: false, deleted: false, box: inbox });
+  });
+  assert.ok((await M.checkMail()).ok);
+  assert.equal(emailBy("Your payslip for October is available"), undefined);
 });

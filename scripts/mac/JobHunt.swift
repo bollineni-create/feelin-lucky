@@ -162,14 +162,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func isLocal(_ url: URL) -> Bool { url.host == appURL.host && url.port == appURL.port }
 
-    // Job postings and other sites open in the default browser; the app's own pages stay in the window.
-    // "Open in Mail" links (message://<Message-ID>) and other app links go to the app that handles them.
+    // Job postings and other sites open in the default browser; the app's own pages stay in the window. "Open in
+    // Mail" links (message://<Message-ID>) go to Mail and mailto: to the mail app. Nothing else leaves the window:
+    // pages show text from job postings and emails, so a file:, smb: or other app link is never handed to macOS.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if let url = action.request.url, let scheme = url.scheme?.lowercased() {
-            let web = scheme == "http" || scheme == "https"
-            if (web && !isLocal(url)) || !(web || ["about", "data", "blob"].contains(scheme)) {
+            if scheme == "http" || scheme == "https" {
+                if !isLocal(url) {
+                    NSWorkspace.shared.open(url)
+                    decisionHandler(.cancel)
+                    return
+                }
+            } else if scheme == "message" || scheme == "mailto" {
                 if scheme == "message" { openInMail(url) } else { NSWorkspace.shared.open(url) }
+                decisionHandler(.cancel)
+                return
+            } else if !["about", "data", "blob"].contains(scheme) {
                 decisionHandler(.cancel)
                 return
             }
@@ -199,9 +208,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     // Resumes, cover letters and screenshots (opened with target="_blank") open in their own apps via the browser.
+    // Same rule as above: web links, Mail links and mailto: only.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = action.request.url { NSWorkspace.shared.open(url) }
+        if let url = action.request.url, let scheme = url.scheme?.lowercased() {
+            if scheme == "message" { openInMail(url) } else if ["http", "https", "mailto"].contains(scheme) { NSWorkspace.shared.open(url) }
+        }
         return nil
     }
 

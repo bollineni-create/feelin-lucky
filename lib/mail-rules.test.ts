@@ -251,3 +251,26 @@ test("review: a recruiter's own follow-up asking for a time is kept", () => {
   const list: Candidate[] = [{ id: 30, stage: "screening", company: "Visa", title: "Payments Strategy Manager", domains: ["visa.com"] }];
   assert.equal(isJobEmail(e, matchEmail(e, list)), true);
 });
+
+test("security: a display name or subject naming the company isn't trusted; the company's domain is", () => {
+  const list: Candidate[] = [{ id: 40, stage: "interviewing", company: "Stripe", title: "Strategic Finance Manager", domains: [] }];
+  const spoof = matchEmail({ sender: sender("Stripe Recruiting <stripe.careers.team@gmail.com>"), subject: "Your application for Strategic Finance Manager", body: "x" }, list);
+  assert.equal(spoof.applicationId, 40);
+  assert.equal(spoof.trusted, false);
+  const lookalike = matchEmail({ sender: sender("Stripe <hr@stripe.mailer-example.com>"), subject: "Strategic Finance Manager", body: "x" }, list);
+  assert.equal(lookalike.trusted, false);
+  const real = matchEmail({ sender: sender("Stripe <jobs@stripe.com>"), subject: "Strategic Finance Manager", body: "x" }, list);
+  assert.equal(real.trusted, true);
+  const ats = matchEmail({ sender: sender("Stripe <no-reply@us.greenhouse-mail.io>"), subject: "Strategic Finance Manager", body: "x" }, list);
+  assert.equal(ats.trusted, true);
+});
+
+test("security: interviewer-side mail and a colleague's 'got time to talk?' aren't kept", () => {
+  const list: Candidate[] = [{ id: 50, stage: "found", company: "JPMorgan Chase", title: "Vice President, Strategy", domains: ["jpmorganchase.com"] }];
+  const job = (raw: string, subject: string, body: string) => {
+    const e = { sender: sender(raw), subject, body };
+    return isJobEmail(e, matchEmail(e, list));
+  };
+  assert.equal(job("Greenhouse <no-reply@greenhouse.io>", "Interview scheduled: Jane Doe for Senior Engineer", "Open the interview kit and submit your scorecard after the interview."), false);
+  assert.equal(job("Bob Smith <bob@jpmorganchase.com>", "Quick sync", "Would you be available for a call tomorrow?"), false);
+});

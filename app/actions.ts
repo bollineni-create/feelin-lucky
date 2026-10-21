@@ -285,6 +285,7 @@ export async function saveMailSettings(formData: FormData) {
   const num = (k: string, fallback: number, max: number) => Math.min(max, Math.max(1, Number(str(formData, k)) || fallback));
   const known = getMailSettings().knownAccounts ?? [];
   const picked = formData.getAll("accounts").filter((a): a is string => typeof a === "string" && known.includes(a));
+  if (known.length && !picked.length) redirect(`/mail?error=${encodeURIComponent("Pick at least one account to read, or turn email tracking off.")}`);
   updateMailSettings({
     // Mail treats "/" in a mailbox name as a folder path.
     mailboxName: (str(formData, "mailbox_name") ?? "Lodestar").replace(/[/\\:]/g, "-").slice(0, 60),
@@ -292,7 +293,7 @@ export async function saveMailSettings(formData: FormData) {
     flagNeedsReply: formData.get("flag_needs_reply") === "on",
     includeJunk: formData.get("include_junk") === "on",
     notify: formData.get("notify") === "on",
-    // Every account ticked (or none) reads them all, including accounts added to Mail later.
+    // Every account ticked reads them all, including accounts added to Mail later.
     accounts: picked.length === known.length ? [] : picked,
     lookbackDays: num("lookback_days", 30, 120),
     updatedAt: iso(),

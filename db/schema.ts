@@ -164,6 +164,9 @@ export const emails = sqliteTable(
     matchedBy: text("matched_by"),
     // Applications it could be about, when the app couldn't tell which.
     candidateIds: text("candidate_ids", { mode: "json" }).$type<number[]>(),
+    // Sent from an address that vouches for the company (an applicant system, a job board, the company's own
+    // domain), not just a display name anyone can type. Only these change anything without review.
+    trusted: integer("trusted", { mode: "boolean" }).notNull().default(false),
     // One line from the agent or you on what it says.
     summary: text("summary"),
     // The stage move it made on its application (from → to), so "Wrong? Look again" can put it back.

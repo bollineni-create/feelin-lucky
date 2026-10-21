@@ -413,9 +413,16 @@ async function runCheck({ launch = false }: { launch?: boolean }): Promise<MailC
 function recordNew(m: BridgeMessage, sender: Sender, match: ReturnType<typeof matchEmail>): Email | null {
   const c = classify(m.subject, m.body, sender);
   const app = match.applicationId ? getApplication(match.applicationId) : undefined;
-  // Only a confident reading tied by company and title is recorded on its own; a company-only match is a suggestion.
-  // A rejection found in Junk (where spoofed mail lands) waits for review rather than closing an application.
-  const done = Boolean(app && c.confident && match.matchedBy === "title" && !(m.where === "junk" && c.kind === "rejection"));
+  // Recorded on its own only when the reading is confident, the match is by company and title, and the sender's
+  // address vouches for the company. A company-only match is a suggestion. A rejection found in Junk (where spoofed
+  // mail lands), or one for an application past "applied" (you've talked to them), waits for review.
+  const done = Boolean(
+    app &&
+      c.confident &&
+      match.matchedBy === "title" &&
+      match.trusted &&
+      !(c.kind === "rejection" && (m.where === "junk" || ["screening", "interviewing", "offer"].includes(app.stage))),
+  );
   const row = db
     .insert(emails)
     .values({
@@ -434,6 +441,7 @@ function recordNew(m: BridgeMessage, sender: Sender, match: ReturnType<typeof ma
       applicationId: app?.id ?? null,
       matchedBy: app ? match.matchedBy : null,
       candidateIds: app ? null : match.candidateIds,
+      trusted: match.trusted,
       resolvedAt: done ? iso() : null,
     })
     .onConflictDoNothing()
@@ -469,14 +477,22 @@ function announce(fresh: Email[], firstCheck: boolean, lookbackDays: number) {
 
 // ---------- Filing in Mail ----------
 
+/**
+ * What Lodestar does to an email in Mail. Only emails tied to an application and sent from an address that vouches
+ * for the company (or ones you settled yourself) are flagged, moved or taken out of Junk: a scam "interview
+ * invitation" in Junk stays there. And the agent's reading of an email never moves it out of the inbox or unflags
+ * it: an interview request it misread stays where you'll see it.
+ */
 function wanted(e: Email, s: MailSettings) {
-  const move = s.fileEmails && e.status === "done" && RECORD_ONLY.includes(e.kind);
+  const vouched = Boolean(e.applicationId) && (e.trusted || e.matchedBy === "you");
+  const move = s.fileEmails && e.status === "done" && RECORD_ONLY.includes(e.kind) && e.matchedBy !== "agent" && vouched;
   return {
     move,
-    flag: s.flagNeedsReply && e.status !== "dismissed" && NEEDS_REPLY.includes(e.kind),
-    // A job email in Junk that isn't being filed (an interview request, one waiting for review) goes back to the
-    // inbox, where you'll see it, rather than sitting where Mail may delete it unread.
-    rescue: e.mailbox === "junk" && e.status !== "dismissed" && !(move && !e.filedTo),
+    flag: s.flagNeedsReply && e.status !== "dismissed" && NEEDS_REPLY.includes(e.kind) && Boolean(e.applicationId) && (vouched || e.matchedBy === "agent"),
+    // An email to answer in Junk goes back to the inbox, where you'll see it, rather than sit where Mail may delete it.
+    rescue: e.mailbox === "junk" && e.status !== "dismissed" && vouched && !(move && !e.filedTo),
+    // Only your own decision takes a flag off.
+    unflag: e.matchedBy === "you",
   };
 }
 
@@ -495,7 +511,7 @@ async function fileEmails(s: MailSettings, retryFailed: boolean): Promise<number
     .map((e) => {
       const w = wanted(e, s);
       const move = w.move && !e.filedTo && !e.fileError?.startsWith("skip:");
-      const flag = w.flag !== e.flagged ? w.flag : null;
+      const flag = w.flag !== e.flagged && (w.flag || w.unflag) ? w.flag : null;
       return move || w.rescue || flag !== null ? { e, move, rescue: w.rescue, flag } : null;
     })
     .filter((a): a is FileAction => a !== null);

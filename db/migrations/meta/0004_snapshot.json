@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "5d59244e-bb55-48e5-a37c-6591470f391b",
+  "id": "cbd05344-2d04-48f6-a294-4c19fe57c4ca",
   "prevId": "f0a96f4b-b7a4-48f0-baf9-4afb0b8f6cc3",
   "tables": {
     "applications": {
@@ -432,6 +432,14 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "trusted": {
+          "name": "trusted",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "summary": {
           "name": "summary",

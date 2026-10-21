@@ -218,8 +218,13 @@ export function asksSomething(subject: string | null | undefined, body: string |
 
 export type Candidate = { id: number; stage: Stage; company: string; title: string; domains: string[] };
 export type Match = { applicationId: number | null; matchedBy: "title" | "company" | null; candidateIds: number[] };
-/** What matchEmail saw on the way: the company named anywhere, by the sender or subject, and a job title named. */
-export type Seen = { companyNamed: boolean; senderNamed: boolean; titleNamed: boolean };
+/**
+ * What matchEmail saw on the way: the company named anywhere; named by the sender or subject; named so by a
+ * company with an application in flight; a job title named; and whether the sender's address can be trusted for
+ * the match (an applicant system, a job board, or the company's own domain), rather than only a display name or
+ * subject, which anyone can type.
+ */
+export type Seen = { companyNamed: boolean; senderNamed: boolean; senderNamedLive: boolean; titleNamed: boolean; trusted: boolean };
 
 /** Stages where an application is in flight: a company-only match must be the one application here. */
 export const LIVE_STAGES: Stage[] = ["approved", "applied", "screening", "interviewing", "offer"];
@@ -261,22 +266,27 @@ export function companyDomain(url: string | null | undefined): string | null {
   return labels.slice(-n).join(".");
 }
 
-type CompanyHit = "sender" | "body" | null;
+type CompanyHit = "domain" | "name" | "body" | null;
 
 /**
- * Where the email names the company: in who sent it or the subject ("sender"), or only in the body. The body is
- * matched case-sensitively, so "Block" the company isn't "block your calendar".
+ * Where the email names the company: by the sender's address ("domain": the company's own domain, or its tenant
+ * at an applicant system), by the sender's display name or the subject ("name", which anyone can type), or only in
+ * the body. The body is matched case-sensitively, so "Block" the company isn't "block your calendar".
  */
 function companyHit(c: Candidate, sender: Sender, subject: string, body: string): CompanyHit {
-  if (sender.domain && c.domains.some((d) => domainIs(sender.domain, d))) return "sender";
+  if (sender.domain && c.domains.some((d) => domainIs(sender.domain, d))) return "domain";
   const aliases = companyAliases(c.company);
   // Workday sends from <company>@myworkday.com, iCIMS from <company>+autoreply@talent.icims.com, Jobvite and
   // Teamtailor from a company subdomain (jobvite.nutanix.com, acme.teamtailor-mail.com).
-  const local = slug(sender.address?.split("@")[0]?.split("+")[0] ?? "");
-  const labels = atsOf(sender.domain) || jobBoardOf(sender.domain) ? [] : (sender.domain ?? "").split(".").slice(0, -1);
-  const atsLabels = atsOf(sender.domain) ? (sender.domain ?? "").split(".") : [];
-  if (aliases.some((a) => slug(a).length >= 4 && (local === slug(a) || atsLabels.includes(slug(a)) || labels.includes(slug(a))))) return "sender";
-  if (aliases.some((a) => (sender.name && wordRe(a, "i").test(sender.name)) || wordRe(a).test(subject))) return "sender";
+  const ats = Boolean(atsOf(sender.domain));
+  const local = ats ? slug(sender.address?.split("@")[0]?.split("+")[0] ?? "") : "";
+  // At an applicant system any label can be the tenant (acme.teamtailor-mail.com); elsewhere only the registrable
+  // one counts, so mail.visa.com is Visa and visa.example-mailer.com isn't.
+  const parts = (sender.domain ?? "").split(".");
+  const n = parts.length >= 3 && /^(?:co|com|org|net|gov|ac)$/.test(parts[parts.length - 2]) && parts[parts.length - 1].length === 2 ? 3 : 2;
+  const labels = jobBoardOf(sender.domain) ? [] : ats ? parts : parts.slice(-n, -n + 1);
+  if (aliases.some((a) => slug(a).length >= 4 && (local === slug(a) || labels.includes(slug(a))))) return "domain";
+  if (aliases.some((a) => (sender.name && wordRe(a, "i").test(sender.name)) || wordRe(a).test(subject))) return "name";
   if (aliases.some((a) => wordRe(a).test(body))) return "body";
   return null;
 }
@@ -320,17 +330,21 @@ export function matchEmail(e: { sender: Sender; subject: string; body: string },
   const body = plain(e.body);
   const hits = candidates.map((c) => ({ c, co: companyHit(c, e.sender, subject, body) })).filter((h) => h.co);
   const titledAll = hits.map((h) => ({ ...h, t: titleHit(h.c.title, subject, body) })).filter((h) => h.t);
-  const titled = titledAll.filter((h) => h.co === "sender");
+  const bySender = (h: { co: CompanyHit }) => h.co === "domain" || h.co === "name";
+  const titled = titledAll.filter(bySender);
   const live = (h: { c: Candidate }) => LIVE_STAGES.includes(h.c.stage);
   // Suggestions: named by the sender before named only in the body, in flight before found, titled first.
-  const ranked = [...new Set([...titledAll, ...hits].sort((a, b) => Number(b.co === "sender") - Number(a.co === "sender") || Number(live(b)) - Number(live(a))).map((h) => h.c.id))].slice(0, 8);
+  const ranked = [...new Set([...titledAll, ...hits].sort((a, b) => Number(bySender(b)) - Number(bySender(a)) || Number(live(b)) - Number(live(a))).map((h) => h.c.id))].slice(0, 8);
+  const systemSender = Boolean(atsOf(e.sender.domain) || jobBoardOf(e.sender.domain));
   const out = (applicationId: number | null, matchedBy: Match["matchedBy"], ids: number[]) => ({
     applicationId,
     matchedBy,
     candidateIds: applicationId ? [] : ids,
     companyNamed: hits.length > 0,
-    senderNamed: hits.some((h) => h.co === "sender"),
+    senderNamed: hits.some(bySender),
+    senderNamedLive: hits.some((h) => bySender(h) && live(h)),
     titleNamed: titledAll.length > 0,
+    trusted: systemSender || hits.some((h) => h.c.id === applicationId && h.co === "domain"),
   });
 
   const exact = titled.filter((h) => h.t === "exact");
@@ -342,7 +356,7 @@ export function matchEmail(e: { sender: Sender; subject: string; body: string },
       return out(null, null, pool.map((h) => h.c.id));
     }
   }
-  const named = hits.filter((h) => h.co === "sender" && live(h));
+  const named = hits.filter((h) => bySender(h) && live(h));
   if (named.length === 1) return out(named[0].c.id, "company", []);
   return out(null, null, ranked);
 }
@@ -351,6 +365,8 @@ export function matchEmail(e: { sender: Sender; subject: string; body: string },
 
 const RECRUITER_SENDER = /recruit|talent|career|hiring|\bjobs?\b|people ?(?:team|ops)|human resources|\bhr\b|staffing|acquisition/i;
 const APP_PHRASE = /\b(?:your (?:job )?application|applying (?:for|to)|applied (?:for|to)|you applied|candidacy|interview|your (?:recent )?submission)\b/i;
+// Mail for someone who interviews candidates (a hiring panel at your current job), not for a candidate.
+const INTERVIEWER_SIDE = /\b(?:scorecard|interview kit|submit (?:your )?(?:interview )?feedback|as an interviewer|interview(?:ing)? (?:a|the|this|your) candidate|availability to interview)\b/i;
 const BOARD_APPLICATION_SUBJECT = /\byour application\b|\bapplication (?:was |has been )?(?:sent|submitted|received|viewed)\b|\byou applied\b|\bapplied (?:to|for)\b|\bapplication (?:status|update)\b|^indeed application:/i;
 
 /**
@@ -361,14 +377,16 @@ const BOARD_APPLICATION_SUBJECT = /\byour application\b|\bapplication (?:was |ha
 export function isJobEmail(e: { sender: Sender; subject: string; body: string }, m: Seen): boolean {
   const subject = plain(e.subject);
   const text = `${subject}\n${plain(e.body)}`;
-  if (ACCOUNT_MAIL.test(subject)) return false;
+  if (ACCOUNT_MAIL.test(subject) || INTERVIEWER_SIDE.test(text)) return false;
   if (jobBoardOf(e.sender.domain)) return BOARD_APPLICATION_SUBJECT.test(subject);
   const appPhrase = APP_PHRASE.test(text);
-  if (atsOf(e.sender.domain)) return appPhrase || !/\bunsubscribe\b/i.test(text);
+  // The same systems send payslips and benefits mail: only what's about an application of yours counts.
+  if (atsOf(e.sender.domain)) return appPhrase || m.titleNamed || (m.senderNamed && asksSomething(e.subject, e.body));
   const recruiter = RECRUITER_SENDER.test(`${e.sender.name ?? ""} ${e.sender.address ?? ""}`);
   if ((recruiter || m.companyNamed) && appPhrase) return true;
-  // Someone at the company writing to ask for a call, a test or a signature, in their own words.
-  if (m.senderNamed && asksSomething(e.subject, e.body)) return true;
+  // Someone at a company you have an application in flight with, asking for a call, a test or a signature in their
+  // own words. (Not any company: your own employer may be on the watchlist.)
+  if (m.senderNamedLive && asksSomething(e.subject, e.body)) return true;
   return m.companyNamed && m.titleNamed && /\b(?:position|role|opening|opportunity|recruit|candidate)\b/i.test(text);
 }
 

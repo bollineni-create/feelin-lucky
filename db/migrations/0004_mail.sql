@@ -15,6 +15,7 @@ CREATE TABLE `emails` (
 	`application_id` integer,
 	`matched_by` text,
 	`candidate_ids` text,
+	`trusted` integer DEFAULT false NOT NULL,
 	`summary` text,
 	`moved_from` text,
 	`moved_to` text,
