@@ -170,6 +170,7 @@ The Lodestar mailbox is created inside each Mail account (not "On My Mac"), so i
 Enforced in code as well as in the runbook.
 
 - `/api/agent/*` requires `Authorization: Bearer $AGENT_TOKEN`. The app binds to loopback only.
+- Only Lodestar itself and the launcher at https://bollineni-create.vercel.app may show Lodestar in a frame (`frame-ancestors` in `next.config.ts`), so no other page can load it out of sight and trick a click. `LODESTAR_FRAME_ANCESTORS` adds more origins.
 - The agent can't approve: the API rejects `found → approved`, and `→ applied` from anything but `approved`, except `found → applied` for a job that passes the auto-apply checks above (re-checked on the server at that moment, cap included). Approval only comes from the Queue's **Approve and submit** button.
 - `approved_to_submit` is empty while the profile is unconfirmed.
 - An email moves an application only forward (to applied, screening, interviewing or offer, or closed as rejected), never to approved, and only an email the app read from Mail itself. The agent can only settle emails the app put up for review.
