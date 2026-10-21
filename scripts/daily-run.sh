@@ -252,9 +252,29 @@ last_browser = None
 # How Claude in Chrome answers a call on a site its site permissions don't allow (kept in step with lib/run-progress.ts).
 SITE_BLOCKED = re.compile(r"not an allowed domain|not allowed (?:by|for|on)|site permissions?|permission (?:denied|required|not granted)|blocked (?:by|domain|site)|domain is (?:not|blocked)", re.I)
 site_blocked, blocked_hosts = 0, set()
+OWN_HOSTS = re.compile(r"(^|\.)(claude\.ai|anthropic\.com|google\.com|chrome)$", re.I)
 def host(url):
-    try: return urlsplit(url).hostname.removeprefix("www.") if isinstance(url, str) else None
+    if not isinstance(url, str) or not re.match(r"https?://", url, re.I): return None
+    try: h = urlsplit(url).hostname
     except ValueError: return None
+    return h.removeprefix("www.").lower() if h else None
+def hosts_in(v, depth=0):
+    """Every host a browser call was aimed at: a navigation's url, and the urls inside a batch's actions."""
+    if depth > 4 or v is None: return []
+    if isinstance(v, str): return [host(v)] if host(v) else []
+    if isinstance(v, list): return [h for x in v for h in hosts_in(x, depth + 1)]
+    if isinstance(v, dict): return [h for x in v.values() for h in hosts_in(x, depth + 1)]
+    return []
+def hosts_in_refusal(text):
+    """Hosts the refusal itself names ("example.com is not an allowed domain"), the extension's own sites aside."""
+    found = set()
+    for m in re.finditer(r"https?://[^\s\"'<>\\)]+", text, re.I):
+        h = host(m.group(0))
+        if h and not OWN_HOSTS.search(h): found.add(h)
+    for m in re.finditer(r"(?<![\w@./-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?![\w-])", text, re.I):
+        h = m.group(1).removeprefix("www.").lower()
+        if not OWN_HOSTS.search(h): found.add(h)
+    return found
 for line in open(sys.argv[1]):
     try: e = json.loads(line)
     except ValueError: continue
@@ -264,7 +284,7 @@ for line in open(sys.argv[1]):
         for c in e.get("message", {}).get("content", []):
             if c.get("type") == "tool_use":
                 tools[c["name"].split("__")[-1]] += 1
-                if c["name"].startswith("mcp__claude-in-chrome__"): browser_calls[c.get("id")] = host((c.get("input") or {}).get("url"))
+                if c["name"].startswith("mcp__claude-in-chrome__"): browser_calls[c.get("id")] = hosts_in(c.get("input"))
     elif e.get("type") == "user":
         for c in e.get("message", {}).get("content", []):
             if c.get("type") != "tool_result": continue
@@ -276,7 +296,8 @@ for line in open(sys.argv[1]):
                 last_browser = "ok"
                 if SITE_BLOCKED.search(text):
                     site_blocked += 1
-                    if browser_calls[c["tool_use_id"]]: blocked_hosts.add(browser_calls[c["tool_use_id"]])
+                    # The call's own URLs say which site; a page read after a navigation has none, so then the refusal's wording does.
+                    blocked_hosts.update(browser_calls[c["tool_use_id"]] or hosts_in_refusal(text))
                 elif not c.get("is_error"): browser_ok += 1
     elif e.get("type") == "result":
         result = e.get("result")

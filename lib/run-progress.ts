@@ -65,7 +65,7 @@ function head(file: string, bytes: number): string {
   }
 }
 
-type Content = { type?: string; id?: string; name?: string; text?: string; tool_use_id?: string; is_error?: boolean; content?: unknown; input?: { url?: unknown } };
+type Content = { type?: string; id?: string; name?: string; text?: string; tool_use_id?: string; is_error?: boolean; content?: unknown; input?: unknown };
 type Event = { type?: string; subtype?: string; mcp_servers?: { name?: string; status?: string }[]; message?: { content?: Content[] } };
 
 const CHROME_TOOL = /^mcp__claude-in-chrome__/;
@@ -78,12 +78,42 @@ export const SITE_BLOCKED = /not an allowed domain|not allowed (?:by|for|on)|sit
 
 /** The host of a URL a browser tool was called with, or null. */
 export function hostOf(url: unknown): string | null {
-  if (typeof url !== "string") return null;
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return null;
   try {
-    return new URL(url).hostname.replace(/^www\./, "") || null;
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase() || null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Every host a browser call was aimed at: the `url` of a navigation, and the URLs inside a batch's actions
+ * (`browser_batch` carries them in an array, not at the top level). Walks the input a few levels down.
+ */
+export function hostsIn(input: unknown, depth = 0): string[] {
+  if (depth > 4 || input == null) return [];
+  if (typeof input === "string") {
+    const h = hostOf(input);
+    return h ? [h] : [];
+  }
+  if (Array.isArray(input)) return input.flatMap((v) => hostsIn(v, depth + 1));
+  if (typeof input === "object") return Object.values(input as Record<string, unknown>).flatMap((v) => hostsIn(v, depth + 1));
+  return [];
+}
+
+/** Hosts named in Claude in Chrome's own refusal text ("example.com is not an allowed domain"), its own sites aside. */
+const OWN_HOSTS = /(^|\.)(claude\.ai|anthropic\.com|google\.com|chrome)$/i;
+export function hostsInRefusal(text: string): string[] {
+  const found = new Set<string>();
+  for (const m of text.matchAll(/https?:\/\/[^\s"'<>\\)]+/gi)) {
+    const h = hostOf(m[0]);
+    if (h && !OWN_HOSTS.test(h)) found.add(h);
+  }
+  for (const m of text.matchAll(/(?<![\w@.\/-])((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(?![\w-])/gi)) {
+    const h = m[1].replace(/^www\./, "").toLowerCase();
+    if (!OWN_HOSTS.test(h)) found.add(h);
+  }
+  return [...found];
 }
 
 function* events(text: string): Generator<Event> {
@@ -107,10 +137,14 @@ function safeLogPath(p: string | null): string | null {
   return abs.startsWith(logs) && abs.endsWith(".log") ? abs : null;
 }
 
+export function emptyProgress(): RunProgress {
+  return { logLines: [], toolCalls: null, toolCallsPartial: false, lastTool: null, lastText: null, lastEventAt: null, chrome: null, browserOk: 0, browserRefused: 0, browserLast: null, browserWaiting: false, siteBlocked: 0, siteBlockedHosts: [] };
+}
+
 export function runProgress(run: Pick<Run, "logPath">): RunProgress | null {
   const log = safeLogPath(run.logPath);
   if (!log) return null;
-  const out: RunProgress = { logLines: [], toolCalls: null, toolCallsPartial: false, lastTool: null, lastText: null, lastEventAt: null, chrome: null, browserOk: 0, browserRefused: 0, browserLast: null, browserWaiting: false, siteBlocked: 0, siteBlockedHosts: [] };
+  const out = emptyProgress();
   try {
     out.logLines = tail(log, 64 * 1024)
       .split("\n")
@@ -139,56 +173,63 @@ export function runProgress(run: Pick<Run, "logPath">): RunProgress | null {
     }
     const partial = size > FULL_READ_LIMIT;
     const text = partial ? tail(transcript, TAIL_BYTES) : fs.readFileSync(transcript, "utf8");
-    let calls = 0;
-    // Browser tool calls by id (with the host each was aimed at, when it had a URL), so their results say
-    // whether the extension is actually answering, and which sites it refuses.
-    const browserCalls = new Map<string, string | null>();
-    const blockedHosts = new Set<string>();
-    // The browser call still waiting for its answer, if the latest one is.
-    let waiting: string | null = null;
-    for (const e of events(text)) {
-      if (e.type === "assistant") {
-        for (const c of e.message?.content ?? []) {
-          if (c.type === "tool_use" && c.name) {
-            calls++;
-            out.lastTool = c.name.replace(/^mcp__[^_]+(?:-[^_]+)*__/, "");
-            if (CHROME_TOOL.test(c.name) && c.id) {
-              browserCalls.set(c.id, hostOf(c.input?.url));
-              waiting = c.id;
-            }
-          } else if (c.type === "text" && c.text?.trim()) {
-            out.lastText = c.text.trim().slice(0, 240);
-          }
-        }
-      } else if (e.type === "user") {
-        for (const c of e.message?.content ?? []) {
-          if (c.type !== "tool_result") continue;
-          const result = JSON.stringify(c.content ?? "");
-          const browser = c.tool_use_id ? browserCalls.has(c.tool_use_id) : false;
-          if (c.tool_use_id === waiting) waiting = null;
-          if (result.includes(NOT_CONNECTED)) {
-            out.browserRefused++;
-            out.browserLast = "refused";
-          } else if (browser) {
-            // Any other answer, an error about the page included, came from the extension.
-            out.browserLast = "ok";
-            if (SITE_BLOCKED.test(result)) {
-              out.siteBlocked++;
-              const host = browserCalls.get(c.tool_use_id!);
-              if (host) blockedHosts.add(host);
-            } else if (!c.is_error) out.browserOk++;
-          }
-        }
-      }
-    }
-    out.toolCalls = calls;
+    readTranscript(text, out);
     out.toolCallsPartial = partial;
-    out.browserWaiting = waiting !== null;
-    out.siteBlockedHosts = [...blockedHosts].sort();
   } catch {
     // Unreadable transcript; the log lines still say something.
   }
   return out;
+}
+
+/** Fills `out` from the transcript's events: tool calls, and how Claude in Chrome answered the browser ones. */
+export function readTranscript(text: string, out: RunProgress): void {
+  let calls = 0;
+  // Browser tool calls by id (with the host each was aimed at, when it had a URL), so their results say
+  // whether the extension is actually answering, and which sites it refuses.
+  const browserCalls = new Map<string, string[]>();
+  const blockedHosts = new Set<string>();
+  // The browser call still waiting for its answer, if the latest one is.
+  let waiting: string | null = null;
+  for (const e of events(text)) {
+    if (e.type === "assistant") {
+      for (const c of e.message?.content ?? []) {
+        if (c.type === "tool_use" && c.name) {
+          calls++;
+          out.lastTool = c.name.replace(/^mcp__[^_]+(?:-[^_]+)*__/, "");
+          if (CHROME_TOOL.test(c.name) && c.id) {
+            browserCalls.set(c.id, hostsIn(c.input));
+            waiting = c.id;
+          }
+        } else if (c.type === "text" && c.text?.trim()) {
+          out.lastText = c.text.trim().slice(0, 240);
+        }
+      }
+    } else if (e.type === "user") {
+      for (const c of e.message?.content ?? []) {
+        if (c.type !== "tool_result") continue;
+        const result = JSON.stringify(c.content ?? "");
+        const browser = c.tool_use_id ? browserCalls.has(c.tool_use_id) : false;
+        if (c.tool_use_id === waiting) waiting = null;
+        if (result.includes(NOT_CONNECTED)) {
+          out.browserRefused++;
+          out.browserLast = "refused";
+        } else if (browser) {
+          // Any other answer, an error about the page included, came from the extension.
+          out.browserLast = "ok";
+          if (SITE_BLOCKED.test(result)) {
+            out.siteBlocked++;
+            // The call's own URLs say which site; a page read after a navigation has none, so then the
+            // refusal's wording does.
+            const hosts = browserCalls.get(c.tool_use_id!) ?? [];
+            for (const h of hosts.length ? hosts : hostsInRefusal(result)) blockedHosts.add(h);
+          } else if (!c.is_error) out.browserOk++;
+        }
+      }
+    }
+  }
+  out.toolCalls = calls;
+  out.browserWaiting = waiting !== null;
+  out.siteBlockedHosts = [...blockedHosts].sort();
 }
 
 /** One line for the run log: what the agent is doing now, or why it has nothing to show. */
