@@ -371,7 +371,7 @@ export async function resolveEmailAction(id: number, formData: FormData) {
   let error: string | null = null;
   try {
     if (what === "dismiss") resolveEmail(id, { dismiss: true }, "you");
-    else if (!applicationId) error = 'Pick which application it\'s about, or "Not about any application here".';
+    else if (!applicationId) error = 'Pick which application it\'s about, or click "Not job-related".';
     else if (EMAIL_CHOICES[what]) {
       const choice = { ...EMAIL_CHOICES[what], applicationId };
       try {
@@ -387,6 +387,18 @@ export async function resolveEmailAction(id: number, formData: FormData) {
   }
   refresh();
   // A redirect either way, so an error from an earlier try doesn't stay on the page.
+  redirect(error ? `/mail?error=${encodeURIComponent(error)}#review` : "/mail#review");
+}
+
+// The Mail page's "Not job-related" button: whatever the dropdowns say, the email isn't about an application.
+export async function dismissEmailAction(id: number) {
+  let error: string | null = null;
+  try {
+    resolveEmail(id, { dismiss: true }, "you");
+  } catch (err) {
+    error = err instanceof Error ? err.message : "Couldn't save that.";
+  }
+  refresh();
   redirect(error ? `/mail?error=${encodeURIComponent(error)}#review` : "/mail#review");
 }
 

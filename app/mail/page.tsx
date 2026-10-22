@@ -8,7 +8,7 @@ import { ago, fmtDateTime } from "@/lib/format";
 import { RunButton } from "@/components/RunButton";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import type { Email, EmailKind } from "@/db/schema";
-import { checkMailNow, connectMail, reopenEmailAction, resolveEmailAction, saveMailSettings, turnOffMail } from "../actions";
+import { checkMailNow, connectMail, dismissEmailAction, reopenEmailAction, resolveEmailAction, saveMailSettings, turnOffMail } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +21,7 @@ const CHOICES: { value: string; label: string }[] = [
   { value: "offer", label: "Offer (→ Offer)" },
   { value: "update", label: "Status update, nothing to do" },
   { value: "other", label: "Something else about this application" },
-  { value: "dismiss", label: "Not about any application here" },
+  { value: "dismiss", label: "Not job-related: ignore it" },
 ];
 
 const guessChoice = (k: EmailKind) => (k === "interview" ? "screening" : k);
@@ -106,7 +106,8 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
                 <p className="small muted">Nothing waiting. Emails Lodestar can&apos;t tie to one application, or isn&apos;t sure about, show up here; the morning run settles most of them.</p>
               ) : (
                 <p className="small muted" style={{ marginBottom: 8 }}>
-                  Lodestar couldn&apos;t tell which application these are about, or what they mean. Say so here, or leave them for the next run.
+                  Lodestar couldn&apos;t tell which application these are about, or what they mean. Say so here, or leave them for the next run. If one
+                  isn&apos;t about your job search at all, click <b>Not job-related</b>.
                 </p>
               )}
               <ul className="mail-list">
@@ -165,6 +166,9 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
                         </select>
                         <button className="btn btn-sm btn-primary" type="submit">
                           Save
+                        </button>
+                        <button className="btn btn-sm" type="submit" formAction={dismissEmailAction.bind(null, e.id)} title="Not about any of your applications: take it off this list">
+                          Not job-related
                         </button>
                       </form>
                     </li>
