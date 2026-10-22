@@ -7,21 +7,23 @@ import { LOG_TAIL_LINES, progressLine, runProgress } from "@/lib/run-progress";
 import { RunButton } from "@/components/RunButton";
 import { getMailSettings } from "@/lib/mail";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { closedOutcome, closedReasonLabel } from "@/lib/outcome";
 import { addLookup, redoLookup, removeLookup, resumeRun, runNow, stopRun, submitApprovedNow } from "./actions";
 
 export const dynamic = "force-dynamic";
 
 const COLUMN_CAP = 12;
 
-// Closed reasons that mean the job was never pursued; those stay off the board.
-const NOT_PURSUED = new Set(["low_fit", "skipped"]);
-
+// Jobs closed as skipped or low fit were never pursued; those stay off the board.
 const COLUMNS: { name: string; match: (a: AppWithJob) => boolean }[] = [
   { name: "Approved", match: (a) => a.stage === "approved" },
   { name: "Applied", match: (a) => a.stage === "applied" },
   { name: "Screening", match: (a) => a.stage === "screening" },
   { name: "Interviewing", match: (a) => a.stage === "interviewing" },
-  { name: "Offer / closed", match: (a) => a.stage === "offer" || (a.stage === "closed" && !NOT_PURSUED.has(a.closedReason ?? "")) },
+  { name: "Offer", match: (a) => a.stage === "offer" },
+  { name: "Rejected", match: (a) => closedOutcome(a) === "rejected" },
+  { name: "Didn't take", match: (a) => closedOutcome(a) === "declined" },
+  { name: "Closed", match: (a) => closedOutcome(a) === "other" },
 ];
 
 function whereText(a: AppWithJob) {
@@ -32,11 +34,11 @@ function whereText(a: AppWithJob) {
 }
 
 function nextText(a: AppWithJob) {
+  if (a.stage === "closed") return closedOutcome(a) === "other" ? closedReasonLabel(a.closedReason) : null;
   if (a.needsSignin) return "Sign in to the portal";
   if (a.nextAction) return a.nextActionDue ? `${a.nextAction} ${fmtDate(a.nextActionDue)}` : a.nextAction;
   if (a.stage === "approved") return "Submitting on next run";
   if (a.stage === "applied") return "Watch portal for a response";
-  if (a.stage === "closed") return `Archived: ${(a.closedReason ?? "closed").replace(/_/g, " ")}`;
   return null;
 }
 
@@ -105,6 +107,11 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   const confirmed = applied.filter((a) => a.emailConfirmedAt).length;
   const followUp = applied.some((a) => a.nextAction === "Follow up");
   const approved = all.filter((a) => a.stage === "approved");
+  const screening = all.filter((a) => a.stage === "screening");
+  const interviewing = all.filter((a) => a.stage === "interviewing");
+  const offers = all.filter((a) => a.stage === "offer").length;
+  const rejected = all.filter((a) => closedOutcome(a) === "rejected").length;
+  const declined = all.filter((a) => closedOutcome(a) === "declined").length;
   const kpis = [
     { label: "Awaiting your approval", value: queue.length, sub: "Found in today’s scan", href: "/queue" },
     {
@@ -112,7 +119,12 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
       value: applied.length,
       sub: confirmed ? `${confirmed} confirmed by email${followUp ? " · some due a follow-up" : ""}` : followUp ? "Some due a follow-up" : "No response yet",
     },
-    { label: "In conversation", value: all.filter((a) => a.stage === "screening" || a.stage === "interviewing" || a.stage === "offer").length, sub: "Screens and interviews" },
+    {
+      label: "Interviewing",
+      value: interviewing.length + screening.length,
+      sub: [`${screening.length} screening`, `${interviewing.length} interviewing`, offers ? `${offers} ${offers === 1 ? "offer" : "offers"}` : null].filter(Boolean).join(" · "),
+    },
+    { label: "Closed out", value: rejected + declined, sub: `${rejected} rejected · ${declined} you didn’t take` },
     { label: "Companies watched", value: companiesWatched, sub: "Plus LinkedIn Jobs and broad searches", href: "/companies" },
   ];
 
@@ -303,7 +315,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
           </div>
         </div>
         <div className="board-wrap">
-          <div className="board">
+          <div className="board" style={{ "--cols": COLUMNS.length } as React.CSSProperties}>
             {COLUMNS.map((col) => {
               const cards = apps.filter(col.match);
               return (
@@ -325,7 +337,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                           <span className="tag accent">{sourceLabel(a.job.source)}</span>
                           {a.internal && (a.stage === "found" || a.stage === "approved") ? <span className="tag amber">Apply internally</span> : null}
                           {a.emailConfirmedAt && a.stage !== "closed" ? <span className="tag">Email ✓</span> : null}
-                          <span className="date">{fmtDate(a.submittedAt ?? a.stageChangedAt)}</span>
+                          <span className="date">{fmtDate(a.stage === "closed" ? a.stageChangedAt : (a.submittedAt ?? a.stageChangedAt))}</span>
                         </div>
                         {next ? <div className="next">Next: {next}</div> : null}
                       </Link>

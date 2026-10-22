@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { ApiError, agentRoute, intParam, parseBody } from "@/lib/agent-auth";
 import { FOLLOW_UP_DAYS, autoApplyCandidates, autoApplyBlocker, changeStage, daysFromNow, getApplication, iso, logEvent } from "@/lib/logic";
+import { normalizeClosedReason } from "@/lib/outcome";
 import { STAGES, type Application, type Stage } from "@/db/schema";
 
 const Body = z.object({
@@ -65,8 +66,9 @@ export const PATCH = agentRoute(async (req, params) => {
       extra.nextActionDue ??= iso(daysFromNow(FOLLOW_UP_DAYS));
     }
     if (b.stage === "closed") {
-      if (!b.closed_reason) throw new ApiError(400, "closed_reason is required when closing");
-      extra.closedReason = b.closed_reason;
+      const reason = normalizeClosedReason(b.closed_reason);
+      if (!reason) throw new ApiError(400, "closed_reason is required when closing");
+      extra.closedReason = reason;
       extra.nextAction = null;
       extra.nextActionDue = null;
     }

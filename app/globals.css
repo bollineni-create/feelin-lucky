@@ -170,7 +170,7 @@ h2.section { font-size: 18px; font-weight: 600; }
 
 /* ---------- Board ---------- */
 .board-wrap { overflow-x: auto; padding-bottom: 8px; }
-.board { display: grid; grid-template-columns: repeat(5, minmax(220px, 1fr)); gap: 12px; min-width: 1150px; }
+.board { display: grid; grid-template-columns: repeat(var(--cols, 5), minmax(210px, 1fr)); gap: 12px; min-width: calc(var(--cols, 5) * 222px); }
 .column { background: var(--muted); border-radius: var(--r); padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 360px; }
 .column-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px 4px; }
 .column-head .name { font-weight: 600; font-size: 14px; }
