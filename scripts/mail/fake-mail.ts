@@ -19,7 +19,7 @@ export function loadBridge(app: unknown) {
 export type Msg = { id: number; messageId: string; sender: string; subject: string; date: Date; content: string; flagged: boolean; junk: boolean; deleted: boolean; box?: Box };
 export type Box = { name: string; account: Acct; msgs: Msg[] };
 export type Acct = { name: string; id: string; type: string; enabled: boolean; gmail: boolean; boxes: Box[] };
-export type AcctSpec = { name: string; type?: string; enabled?: boolean; gmail?: boolean; inbox?: Partial<Msg>[]; junk?: Partial<Msg>[]; boxes?: string[] };
+export type AcctSpec = { name: string; type?: string; enabled?: boolean; gmail?: boolean; inbox?: Partial<Msg>[]; junk?: Partial<Msg>[]; boxes?: string[]; folders?: Record<string, Partial<Msg>[]> };
 
 // Like Object.assign onto a function, but also for keys functions already have (`name`, `length`).
 const callable = <T extends object>(fn: (...a: any[]) => any, props: T) => {
@@ -43,6 +43,7 @@ export function buildAccounts(specs: AcctSpec[], firstId = 1): { accts: Acct[]; 
     box("INBOX", a.inbox);
     box("Junk", a.junk);
     (a.boxes ?? []).forEach((n) => box(n));
+    Object.entries(a.folders ?? {}).forEach(([n, msgs]) => box(n, msgs));
     return acct;
   });
   return { accts, nextId };

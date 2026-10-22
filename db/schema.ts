@@ -177,8 +177,9 @@ export const emails = sqliteTable(
     // The RFC Message-ID header, which stays the same when the message moves between mailboxes.
     messageId: text("message_id").notNull(),
     // Where it is in Mail, to find it again quickly: the account (its name, and Mail's id for it: two accounts can
-    // share a name), "inbox", "junk" or the mailbox Lodestar filed it in, and Mail's own id for the message there
-    // (which changes when it moves). Message-ID searches are slow in Mail.
+    // share a name), "inbox", "junk", "trash/<name>", "archive/<name>", "folder/<name>" (a folder you made) or the
+    // mailbox Lodestar filed it in, and Mail's own id for the message there (which changes when it moves).
+    // Message-ID searches are slow in Mail.
     account: text("account"),
     accountId: text("account_id"),
     mailbox: text("mailbox"),
@@ -226,6 +227,8 @@ export const mailSettings = sqliteTable("mail_settings", {
   fileEmails: integer("file_emails", { mode: "boolean" }).notNull().default(true),
   flagNeedsReply: integer("flag_needs_reply", { mode: "boolean" }).notNull().default(true),
   includeJunk: integer("include_junk", { mode: "boolean" }).notNull().default(true),
+  // Also read Trash, Archive (Gmail's All Mail) and the folders you made, not only the inbox and Junk.
+  includeOther: integer("include_other_mailboxes", { mode: "boolean" }).notNull().default(true),
   notify: integer("notify", { mode: "boolean" }).notNull().default(true),
   // Mail account names to read; empty reads them all.
   accounts: text("accounts", { mode: "json" }).$type<string[]>().notNull().default([]),

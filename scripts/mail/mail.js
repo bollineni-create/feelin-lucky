@@ -2,15 +2,19 @@
 //   osascript -l JavaScript scripts/mail/mail.js '{"cmd": "status"}'
 // and reads one line of JSON back. Commands:
 //   status  {running}: whether Mail is open. Sends Mail nothing, so it never asks for permission or opens Mail.
-//   list    {since, accounts, include_junk, fetch, domains, terms, known, max_bodies, body_chars}: messages received
-//           since `since` in each account's Inbox (and Junk). Reads sender and subject for all of them, and the body
+//   list    {since, accounts, include_junk, include_other, mailbox, fetch, domains, terms, known, max_bodies, body_chars}:
+//           messages received since `since` in each account's Inbox (and Junk), and with `include_other` in its other
+//           mailboxes too (Trash, Archive, All Mail, folders you made), but never Sent, Drafts or the `mailbox` Lodestar
+//           files in. A message in two mailboxes (Gmail's labels) is listed once, from the first: Inbox, Junk, Trash,
+//           Archive, then the rest. Reads sender and subject for all of them, and the body
 //           only of those whose sender domain is in `domains` or whose sender or subject has one of `terms` (the rest
 //           are never read), skipping Message-IDs in `known`. Oldest first, at most `max_bodies`. `fetch` has Mail
 //           check its servers first.
 //   file    {mailbox, actions: [{message_id, mail_id, account_id, account, where, move, rescue, flag}]}: finds each
 //           message where the listing (or an earlier filing) left it, sets or clears its flag, and moves it into
-//           `mailbox` inside its own account (making that mailbox there if needed), or with `rescue` from Junk back
-//           to the account's inbox. A message is reported `gone` only when Mail says it isn't there (-1728).
+//           `mailbox` inside its own account (making that mailbox there if needed), or with `rescue` from Junk or
+//           Trash back to the account's inbox. `where` is "inbox", "junk", "trash/<name>", "archive/<name>",
+//           "folder/<name>" (as the listing gave it) or the name of the mailbox Lodestar filed it in. A message is reported `gone` only when Mail says it isn't there (-1728).
 // It never sends, replies to or deletes anything. Failures come back as {ok: false, error, number}; -1743 means
 // macOS hasn't allowed this to control Mail. scripts/mail/mail.test.ts runs it against a stand-in Mail.
 //
@@ -96,6 +100,17 @@ function findBox(acct, name) {
 }
 
 var BOX_NAMES = { inbox: ["INBOX", "Inbox"], junk: ["Junk", "Spam", "Junk Email", "Junk E-mail", "Bulk Mail", "[Gmail]/Spam"] };
+var TRASH_NAMES = ["Trash", "Deleted Messages", "Deleted Items", "Deleted", "Bin", "[Gmail]/Trash", "[Gmail]/Bin"];
+var ARCHIVE_NAMES = ["Archive", "Archives", "All Mail", "[Gmail]/All Mail"];
+// Your own mail (sent, drafts, waiting to go), Gmail's views of mail that's also in All Mail, and Exchange's
+// non-mail folders: nothing in them is a job email someone sent you.
+var SKIP_NAMES = ["Sent", "Sent Messages", "Sent Items", "Sent Mail", "[Gmail]/Sent Mail", "Drafts", "[Gmail]/Drafts", "Outbox", "Notes",
+  "Templates", "[Gmail]", "Important", "[Gmail]/Important", "Starred", "[Gmail]/Starred", "Snoozed", "Scheduled", "Chats", "Calendar",
+  "Contacts", "Tasks", "Journal", "Conversation History", "RSS Feeds", "Sync Issues", "Conflicts", "Local Failures", "Server Failures"];
+
+function lower(names) {
+  return names.map(function (n) { return String(n).toLowerCase(); });
+}
 
 // Each account's own Inbox (or Junk): the unified mailbox's per-account mailboxes, else by name.
 function accountBoxes(Mail, where) {
@@ -123,6 +138,60 @@ function accountBoxes(Mail, where) {
   return out;
 }
 
+// The per-account mailboxes of one of Mail's unified mailboxes (Trash, Sent, ...), by account id: {id: [names]}.
+function unifiedNames(Mail, prop) {
+  var out = {};
+  try {
+    Mail[prop].mailboxes().forEach(function (mb) {
+      try {
+        var id = mb.account().id();
+        (out[id] = out[id] || []).push(String(mb.name()).toLowerCase());
+      } catch (e) {}
+    });
+  } catch (e) {}
+  return out;
+}
+
+// Each account's mailboxes other than its Inbox and Junk, with what kind each is ("trash", "archive" or "folder"),
+// Trash first, then Archive: Gmail keeps every message in All Mail too, and the first mailbox a message is found in
+// is the one it's listed (and filed) from. Leaves out Sent, Drafts and the like, and the mailbox Lodestar files in.
+function otherBoxes(Mail, ownName) {
+  var trash = unifiedNames(Mail, "trashMailbox");
+  var skipped = [unifiedNames(Mail, "sentMailbox"), unifiedNames(Mail, "draftsMailbox"), unifiedNames(Mail, "outbox"), unifiedNames(Mail, "junkMailbox"), unifiedNames(Mail, "inbox")];
+  var skipNames = lower(SKIP_NAMES.concat(BOX_NAMES.inbox, BOX_NAMES.junk, [ownName || "Lodestar"]));
+  var trashNames = lower(TRASH_NAMES);
+  var archiveNames = lower(ARCHIVE_NAMES);
+  var rank = { trash: 0, archive: 1, folder: 2 };
+  var out = [];
+  Mail.accounts().forEach(function (acct) {
+    try {
+      if (acct.enabled() === false) return;
+      var id = acct.id();
+      var name = acct.name();
+      var names = acct.mailboxes.name();
+      for (var i = 0; i < names.length; i++) {
+        var n = String(names[i]);
+        var l = n.toLowerCase();
+        if (skipNames.indexOf(l) >= 0 || skipped.some(function (s) { return (s[id] || []).indexOf(l) >= 0; })) continue;
+        var kind = trashNames.indexOf(l) >= 0 || (trash[id] || []).indexOf(l) >= 0 ? "trash" : archiveNames.indexOf(l) >= 0 ? "archive" : "folder";
+        out.push({ account: name, accountId: id, box: acct.mailboxes[i], where: kind + "/" + n, rank: rank[kind] });
+      }
+    } catch (e) {}
+  });
+  // Stable: within a kind, accounts and mailboxes keep Mail's order.
+  return out.map(function (s, i) { return { s: s, i: i }; }).sort(function (a, b) { return a.s.rank - b.s.rank || a.i - b.i; }).map(function (x) { return x.s; });
+}
+
+// "trash/Deleted Messages" → {kind: "trash", name: "Deleted Messages"}; "inbox", "junk" and a filed-in mailbox's
+// name are their own kind ("filed" for the last).
+function placeOf(where) {
+  var w = String(where || "inbox");
+  var m = /^(trash|archive|folder)\/(.+)$/.exec(w);
+  if (m) return { kind: m[1], name: m[2] };
+  if (w === "inbox" || w === "junk") return { kind: w, name: w };
+  return { kind: "filed", name: w };
+}
+
 function boxFor(Mail, where, accountId, account) {
   var all = accountBoxes(Mail, where);
   for (var i = 0; i < all.length; i++) if (accountId ? all[i].accountId === accountId : all[i].account === account) return all[i].box;
@@ -146,7 +215,7 @@ function accountFor(Mail, accountId, account) {
 }
 
 // A message by Mail's own id in a mailbox, checked against its Message-ID. `scan` also searches by Message-ID,
-// which is only reasonable in a small mailbox (Junk, Lodestar).
+// which is only reasonable in a small mailbox (Junk, Lodestar, most Trash).
 // Only Mail saying "can't get object" (-1728) means the message isn't there; anything else (Mail busy, quitting, a
 // permission withdrawn) is passed on, so the caller retries rather than giving up on the message.
 function findMessage(box, mailId, messageId, scan) {
@@ -220,6 +289,7 @@ function list(Mail, input) {
   var relevant = looksRelevant(input);
   var sources = accountBoxes(Mail, "inbox").map(function (s) { return { account: s.account, accountId: s.accountId, box: s.box, where: "inbox" }; });
   if (input.include_junk) sources = sources.concat(accountBoxes(Mail, "junk").map(function (s) { return { account: s.account, accountId: s.accountId, box: s.box, where: "junk" }; }));
+  if (input.include_other) sources = sources.concat(otherBoxes(Mail, input.mailbox));
   sources = sources.filter(function (s) { return !wanted.length || wanted.indexOf(s.account) >= 0; });
 
   var scanned = 0;
@@ -232,7 +302,7 @@ function list(Mail, input) {
       h = headers(src.box, src.box.messages.whose({ dateReceived: { _greaterThan: since } }));
     } catch (e) {
       if (errNum(e) === -1743) throw e;
-      problems.push(src.account + " " + src.where + ": " + String((e && e.message) || e));
+      problems.push(src.account + " " + placeOf(src.where).name + ": " + String((e && e.message) || e));
       return;
     }
     scanned += h.id.length;
@@ -414,6 +484,14 @@ function moveTo(Mail, msg, box, name, messageId) {
   throw failure || new Error("Mail didn't move it.");
 }
 
+function smallBox(box) {
+  try {
+    return box.messages.length <= 2000;
+  } catch (e) {
+    return false;
+  }
+}
+
 function file(Mail, input, sh) {
   if (!Mail.running()) return { ok: false, error: "Mail isn't running.", number: -600 };
   var name = input.mailbox || "Lodestar";
@@ -431,9 +509,11 @@ function file(Mail, input, sh) {
         return r;
       }
       var where = a.where || "inbox";
-      var box = where === "inbox" || where === "junk" ? boxFor(Mail, where, a.account_id, a.account) : findBox(acct, where);
-      // A big inbox is only looked up by id; Junk and Lodestar are small enough to search.
-      var msg = box ? findMessage(box, a.mail_id, a.message_id, where !== "inbox") : null;
+      var place = placeOf(where);
+      var box = where === "inbox" || where === "junk" ? boxFor(Mail, where, a.account_id, a.account) : findBox(acct, place.name);
+      // A big mailbox (the inbox, All Mail, a busy folder) is only looked up by id; Junk and Lodestar are small
+      // enough to search, and so are the others while they're small.
+      var msg = box ? findMessage(box, a.mail_id, a.message_id, where === "junk" || place.kind === "filed" || (where !== "inbox" && smallBox(box))) : null;
       if (!msg) {
         r.gone = true;
         return r;
@@ -457,8 +537,8 @@ function file(Mail, input, sh) {
           destName = name;
         }
       }
-      // Something to answer shouldn't sit in Junk, where it can be deleted unread: back to the account's inbox.
-      if (!dest && a.rescue && where === "junk") {
+      // Something to answer shouldn't sit in Junk or Trash, where Mail deletes it in time: back to the account's inbox.
+      if (!dest && a.rescue && (where === "junk" || place.kind === "trash")) {
         dest = boxFor(Mail, "inbox", a.account_id, a.account);
         destName = "inbox";
       }

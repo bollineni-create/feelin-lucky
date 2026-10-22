@@ -84,6 +84,57 @@ test("list reads only the accounts asked for", () => {
   assert.deepEqual(out.messages.map((m: Out) => m.message_id), ["g@x"]);
 });
 
+test("list also reads Trash, Archive and your folders, Trash first, never Sent, Drafts or Lodestar, each message once", () => {
+  const job = (messageId: string, d: number) => ({ messageId, sender: "x <x@greenhouse-mail.io>", subject: "Your application", date: day(d), content: "body" });
+  const { mail } = fakeMail({
+    accounts: [
+      {
+        name: "Gmail",
+        inbox: [job("in@x", 10)],
+        folders: {
+          "All Mail": [job("in@x", 10), job("arch@x", 11)],
+          Trash: [job("del@x", 12)],
+          Recruiters: [job("mine@x", 13), job("arch@x", 11)],
+          "Sent Mail": [job("sent@x", 14)],
+          Drafts: [job("draft@x", 14)],
+          Lodestar: [job("filed@x", 14)],
+        },
+      },
+    ],
+  });
+  const b = loadBridge(mail);
+  const out = b.handle(mail, { ...base, cmd: "list", since: day(1).toISOString(), include_other: true, mailbox: "Lodestar" }, noShell);
+  assert.deepEqual(out.problems, []);
+  assert.deepEqual(
+    out.messages.map((m: Out) => [m.message_id, m.where]),
+    [["in@x", "inbox"], ["arch@x", "archive/All Mail"], ["del@x", "trash/Trash"], ["mine@x", "folder/Recruiters"]],
+  );
+  // Off, only the inbox (and Junk) as before.
+  const off = b.handle(mail, { ...base, cmd: "list", since: day(1).toISOString(), mailbox: "Lodestar" }, noShell);
+  assert.deepEqual(off.messages.map((m: Out) => m.message_id), ["in@x"]);
+});
+
+test("file moves out of Trash into Lodestar, rescues from Trash to the inbox, and finds a message in your folder to flag", () => {
+  const { mail, accts } = fakeMail({ accounts: [{ name: "iCloud", folders: { "Deleted Messages": [{ messageId: "r@x" }, { messageId: "i@x" }], Recruiters: [{ messageId: "f@x" }] } }] });
+  const box = (n: string) => accts[0].boxes.find((x) => x.name === n)!;
+  const [r, i] = box("Deleted Messages").msgs;
+  const f = box("Recruiters").msgs[0];
+  const at = (m: Msg, where: string, extra: Out) => ({ message_id: m.messageId, mail_id: m.id, account: "iCloud", where, ...extra });
+  const out = loadBridge(mail).handle(
+    mail,
+    { cmd: "file", mailbox: "Lodestar", actions: [at(r, "trash/Deleted Messages", { move: true }), at(i, "trash/Deleted Messages", { rescue: true, flag: true }), at(f, "folder/Recruiters", { flag: true })] },
+    noShell,
+  );
+  assert.equal(out.results[0].moved_to, "Lodestar");
+  assert.equal(out.results[1].rescued, true);
+  assert.deepEqual(out.results[2], { message_id: "f@x", flagged: true });
+  assert.equal(r.box!.name, "Lodestar");
+  assert.equal(i.box!.name, "INBOX");
+  assert.equal(i.flagged, true);
+  assert.equal(f.box!.name, "Recruiters");
+  assert.equal(f.flagged, true);
+});
+
 const act = (m: Msg, extra: Out) => ({ message_id: m.messageId, mail_id: m.id, account: m.box!.account.name, where: m.box!.name === "Junk" ? "junk" : "inbox", ...extra });
 
 test("file moves into the mailbox in the message's own account, making it once, and flags", () => {

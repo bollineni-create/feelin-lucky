@@ -85,7 +85,8 @@ export function mailLink(messageId: string) {
 
 // ---------- The bridge ----------
 
-type BridgeMessage = { message_id: string; mail_id: number | null; account: string | null; account_id?: string | null; where: "inbox" | "junk"; sender: string; subject: string | null; received_at: string; body: string | null };
+// `where`: "inbox", "junk", "trash/<name>", "archive/<name>" or "folder/<name>" (one you made).
+type BridgeMessage = { message_id: string; mail_id: number | null; account: string | null; account_id?: string | null; where: string; sender: string; subject: string | null; received_at: string; body: string | null };
 type ListOut = { ok: true; running: boolean; accounts?: string[]; scanned?: number; newest?: string | null; truncated?: boolean; unread?: number; problems?: string[]; messages?: BridgeMessage[] };
 type FileResult = { message_id: string; moved_to?: string; mail_id?: number | null; still_in_inbox?: boolean; rescued?: boolean; flagged?: boolean; gone?: boolean; skipped?: string; error?: string };
 type FileOut = { ok: true; results: FileResult[] };
@@ -369,6 +370,8 @@ async function runCheck({ launch = false }: { launch?: boolean }): Promise<MailC
       since,
       accounts: s.accounts,
       include_junk: s.includeJunk,
+      include_other: s.includeOther,
+      mailbox: s.mailboxName,
       fetch: launch,
       ...prefilter(cands),
       known: [...known, ...skip],
@@ -502,20 +505,31 @@ function announce(fresh: Email[], firstCheck: boolean, lookbackDays: number) {
 
 // ---------- Filing in Mail ----------
 
+/** Where an email is in Mail, by its `mailbox` (see emails.mailbox): "filed" is the mailbox Lodestar moved it to. */
+function placeOf(mailbox: string | null): "inbox" | "junk" | "trash" | "archive" | "folder" | "filed" {
+  const m = /^(trash|archive|folder)\//.exec(mailbox ?? "");
+  if (m) return m[1] as "trash" | "archive" | "folder";
+  if (!mailbox || mailbox === "inbox") return "inbox";
+  return mailbox === "junk" ? "junk" : "filed";
+}
+
 /**
  * What Lodestar does to an email in Mail. Only emails tied to an application and sent from an address that vouches
  * for the company (or ones you settled yourself) are flagged, moved or taken out of Junk: a scam "interview
  * invitation" in Junk stays there. And the agent's reading of an email never moves it out of the inbox or unflags
- * it: an interview request it misread stays where you'll see it.
+ * it: an interview request it misread stays where you'll see it. Found in Trash or Archive, an email is filed the same
+ * way (out of Trash before it's emptied); in a folder you made, it's where you put it: flagged, never moved.
  */
 function wanted(e: Email, s: MailSettings) {
   const vouched = Boolean(e.applicationId) && (e.trusted || e.matchedBy === "you");
-  const move = s.fileEmails && e.status === "done" && RECORD_ONLY.includes(e.kind) && e.matchedBy !== "agent" && vouched;
+  const place = placeOf(e.mailbox);
+  const move = s.fileEmails && e.status === "done" && RECORD_ONLY.includes(e.kind) && e.matchedBy !== "agent" && vouched && place !== "folder";
   return {
     move,
     flag: s.flagNeedsReply && e.status !== "dismissed" && NEEDS_REPLY.includes(e.kind) && Boolean(e.applicationId) && (vouched || e.matchedBy === "agent"),
-    // An email to answer in Junk goes back to the inbox, where you'll see it, rather than sit where Mail may delete it.
-    rescue: e.mailbox === "junk" && e.status !== "dismissed" && vouched && !(move && !e.filedTo),
+    // An email in Junk goes back to the inbox, where you'll see it, rather than sit where Mail may delete it; from
+    // Trash, only one to answer (a rejection you deleted stays out of your inbox).
+    rescue: (place === "junk" || (place === "trash" && NEEDS_REPLY.includes(e.kind))) && e.status !== "dismissed" && vouched && !(move && !e.filedTo),
     // Only your own decision takes a flag off.
     unflag: e.matchedBy === "you",
   };

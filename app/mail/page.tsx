@@ -91,7 +91,7 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
               <h2>Track your applications by email</h2>
               <ol className="bullets" style={{ paddingLeft: 18 }}>
                 <li>Click <b>Connect Apple Mail</b>. macOS asks whether &ldquo;node&rdquo; (the program Lodestar&apos;s server runs as) may control Mail: choose <b>OK</b>.</li>
-                <li>Lodestar reads the last {s.lookbackDays} days of your inbox (and Junk) in every Mail account, and keeps only the emails about your job search.</li>
+                <li>Lodestar reads the last {s.lookbackDays} days of mail in every Mail account (the inbox, Junk, Trash, Archive and your own folders), and keeps only the emails about your job search.</li>
                 <li>Each one goes on its application: a confirmation marks it confirmed (and applied, if you sent it yourself), a rejection closes it, an interview request asks you to reply.</li>
                 <li>It files what it has recorded in a <b>{s.mailboxName}</b> mailbox inside the same account (so it shows on your phone too) and flags what needs a reply.</li>
                 <li>Then it checks every 15 minutes while Mail is open, and each morning&apos;s run checks too.</li>
@@ -267,6 +267,10 @@ export default async function MailPage({ searchParams }: { searchParams: Promise
                 </label>
                 <label className="check">
                   <input type="checkbox" name="include_junk" defaultChecked={s.includeJunk} /> Also look in Junk (applicant systems&apos; mail often lands there)
+                </label>
+                <label className="check">
+                  <input type="checkbox" name="include_other" defaultChecked={s.includeOther} /> Also look in Trash, Archive and your own folders (job emails
+                  in Trash or Archive are filed like the inbox&apos;s; ones in your folders stay where you put them)
                 </label>
                 <label className="check">
                   <input type="checkbox" name="notify" defaultChecked={s.notify} /> Notify me on this Mac about rejections and emails that need me
