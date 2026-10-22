@@ -2,7 +2,7 @@ import fs from "node:fs";
 import Link from "next/link";
 import path from "node:path";
 import { DATA_DIR } from "@/lib/db";
-import { getCriteria, getProfile } from "@/lib/logic";
+import { currentEmployer, getCriteria, getProfile } from "@/lib/logic";
 import { fmtDateTime } from "@/lib/format";
 import { saveCriteria, saveProfile } from "../actions";
 
@@ -15,6 +15,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const docDir = path.join(DATA_DIR, "source-docs");
   const has = (f: string | null) => Boolean(f && fs.existsSync(path.join(docDir, f)));
   const placeholders = /\[(CONFIRM|TITLE)[^\]]*\]/i.test(JSON.stringify(p.workHistory));
+  const employer = currentEmployer();
 
   return (
     <>
@@ -164,6 +165,22 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 <label htmlFor="broad_searches">Broad searches (label | what to search)</label>
                 <textarea className="input" id="broad_searches" name="broad_searches" rows={7} defaultValue={c.broadSearches.map((b) => `${b.label} | ${b.query}`).join("\n")} />
               </div>
+              <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }} id="employer">
+                <legend className="label-caps">Where you work now</legend>
+                <span className="small muted">
+                  Jobs at this company are earmarked <strong>apply internally</strong>: the agent still finds, scores and prepares them, but never submits. You apply through
+                  the internal job site and mark them applied from the Queue. Change this when you start somewhere new.
+                </span>
+                <div className="field" style={{ marginTop: 8 }}>
+                  <label htmlFor="current_employer">Current employer</label>
+                  <input className="input" id="current_employer" name="current_employer" defaultValue={c.currentEmployer ?? ""} placeholder={employer ? `${employer} (from your work history)` : "e.g. JPMorgan Chase"} />
+                  <span className="small muted">{c.currentEmployer ? "" : employer ? `Empty: using "${employer}", the current entry in your work history.` : "Empty, and no current entry in your work history: nothing is earmarked."}</span>
+                </div>
+                <div className="field">
+                  <label htmlFor="internal_jobs_url">Internal job site (link)</label>
+                  <input className="input mono" id="internal_jobs_url" name="internal_jobs_url" type="url" defaultValue={c.internalJobsUrl ?? ""} placeholder="https://…" />
+                </div>
+              </fieldset>
               <div className="field">
                 <label htmlFor="notes">Notes for scoring</label>
                 <textarea className="input" id="notes" name="notes" rows={4} defaultValue={c.notes ?? ""} />

@@ -46,6 +46,8 @@ export const PATCH = agentRoute(async (req, params) => {
 
   if (b.stage && b.stage !== app.stage) {
     let detail = b.detail ?? b.closed_reason ?? null;
+    // Jobs at the user's current employer go through the internal job site; the agent never submits one.
+    if (b.stage === "applied" && app.internal) throw new ApiError(403, "this job is at the user's current employer: they apply through the internal job site, the agent does not submit it");
     const autoApply = app.stage === "found" && b.stage === "applied";
     if (autoApply) {
       const blocker = autoApplyBlocker(app);

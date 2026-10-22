@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db, schema } from "@/lib/db";
-import { changeStage, getApplication, getProfile, hasMaterials, iso, lastFinishedRun, logEvent, matchCompany } from "@/lib/logic";
+import { FOLLOW_UP_DAYS, changeStage, daysFromNow, getApplication, getProfile, hasMaterials, iso, lastFinishedRun, logEvent, matchCompany } from "@/lib/logic";
 import { renderMaterials } from "@/lib/render";
 import { startAgentRun, stopAgentRun } from "@/lib/runner";
 import { checkMailBriefly, getMailSettings, reopenEmail, resolveEmail, updateMailSettings, type Resolution } from "@/lib/mail";
@@ -31,7 +31,21 @@ export async function approveApplication(appId: number) {
   const app = getApplication(appId);
   if (!app || app.stage !== "found") return;
   if (!hasMaterials(app)) return;
+  // Jobs at the current employer go through the internal job site, never the agent.
+  if (app.internal) return;
   changeStage(appId, "approved", { source: "you", detail: "Submitting on next run" });
+  refresh();
+}
+
+/** The user applied to a job at their current employer through the internal job site. */
+export async function markAppliedInternally(appId: number) {
+  const app = getApplication(appId);
+  if (!app || (app.stage !== "found" && app.stage !== "approved")) return;
+  changeStage(appId, "applied", {
+    source: "you",
+    detail: "Applied through the internal job site",
+    extra: { submittedAt: iso(), needsSignin: false, portalNote: "Applied internally", nextAction: "Follow up", nextActionDue: iso(daysFromNow(FOLLOW_UP_DAYS)) },
+  });
   refresh();
 }
 
@@ -283,6 +297,8 @@ export async function saveCriteria(formData: FormData) {
       autoApplyMinScore: num("auto_apply_min_score") ?? 85,
       autoApplyDailyCap: num("auto_apply_daily_cap") ?? 10,
       autoApplySources: formData.getAll("auto_apply_sources").filter((v): v is Source => SOURCES.includes(v as Source)),
+      currentEmployer: str(formData, "current_employer"),
+      internalJobsUrl: str(formData, "internal_jobs_url"),
       updatedAt: iso(),
     })
     .where(eq(schema.searchCriteria.id, 1))

@@ -259,6 +259,12 @@ export const searchCriteria = sqliteTable("search_criteria", {
   autoApplyMinScore: integer("auto_apply_min_score").notNull().default(85),
   autoApplyDailyCap: integer("auto_apply_daily_cap").notNull().default(10),
   autoApplySources: text("auto_apply_sources", { mode: "json" }).$type<Source[]>().notNull().default(["careers", "linkedin"]),
+  // Where the user works now. Jobs at this company are earmarked "apply internally": the agent still finds, scores
+  // and prepares them, but never submits; the user applies through the employer's internal job site and marks it
+  // applied. Empty means "use the current entry in the profile's work history". Change it on a new job.
+  currentEmployer: text("current_employer"),
+  // The internal job site, so the Queue can link straight to it.
+  internalJobsUrl: text("internal_jobs_url"),
   updatedAt: text("updated_at").notNull().$defaultFn(now),
 });
 

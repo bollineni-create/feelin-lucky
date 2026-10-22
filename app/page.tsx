@@ -323,6 +323,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                         </div>
                         <div className="meta">
                           <span className="tag accent">{sourceLabel(a.job.source)}</span>
+                          {a.internal && (a.stage === "found" || a.stage === "approved") ? <span className="tag amber">Apply internally</span> : null}
                           {a.emailConfirmedAt && a.stage !== "closed" ? <span className="tag">Email ✓</span> : null}
                           <span className="date">{fmtDate(a.submittedAt ?? a.stageChangedAt)}</span>
                         </div>

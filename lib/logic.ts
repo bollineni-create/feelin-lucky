@@ -4,6 +4,7 @@ import path from "node:path";
 import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
 import { ROOT, db, schema } from "./db";
 import type { Application, Job, Stage } from "@/db/schema";
+import { isSameEmployer } from "./employer";
 
 const { applications, jobs, events, companies, searchCriteria, profile, runs, lookups } = schema;
 
@@ -20,6 +21,19 @@ export function getCriteria() {
 
 export function getProfile() {
   return db.select().from(profile).where(eq(profile.id, 1)).get()!;
+}
+
+/** Where the user works now: the Settings value, or the profile's current work-history entry (no end date). */
+export function currentEmployer(): string | null {
+  const set = getCriteria().currentEmployer?.trim();
+  if (set) return set;
+  const cur = getProfile().workHistory.find((w) => !w.end);
+  return cur?.employer?.trim() || null;
+}
+
+/** Jobs at the current employer are earmarked "apply internally": prepared, never submitted by the agent. */
+export function isInternalJob(job: Pick<Job, "companyName">) {
+  return isSameEmployer(currentEmployer(), job.companyName);
 }
 
 export function logEvent(e: { applicationId: number | null; type: EventType; title: string; detail?: string | null; source?: string; at?: string }) {
@@ -91,7 +105,7 @@ export function sweepFollowUps() {
   return stale.length;
 }
 
-export type AppWithJob = Application & { job: Job; companyHighlight: string | null; companyPriority: string | null; atsType: string | null };
+export type AppWithJob = Application & { job: Job; companyHighlight: string | null; companyPriority: string | null; atsType: string | null; internal: boolean };
 
 /** Watchlist rank: high-priority (red) companies 0, other watchlist companies 1, everyone else 2. */
 export function watchTier(a: Pick<AppWithJob, "companyPriority">) {
@@ -129,7 +143,8 @@ export function listApplications(where?: ReturnType<typeof and>): AppWithJob[] {
     .where(where)
     .orderBy(desc(applications.stageChangedAt))
     .all();
-  return rows.map((r) => ({ ...r.app, job: r.job, companyHighlight: r.hl, companyPriority: r.pr, atsType: r.ats }));
+  const employer = currentEmployer();
+  return rows.map((r) => ({ ...r.app, job: r.job, companyHighlight: r.hl, companyPriority: r.pr, atsType: r.ats, internal: isSameEmployer(employer, r.job.companyName) }));
 }
 
 export function getApplication(appId: number): AppWithJob | undefined {
@@ -169,6 +184,7 @@ export function autoApplyBlocker(a: AppWithJob): string | null {
   if (!c.autoApply) return "auto-apply is off";
   if (!getProfile().confirmed) return "profile is not confirmed";
   if (a.stage !== "found") return `stage is "${a.stage}"`;
+  if (a.internal) return "it's at your current employer: apply through the internal job site";
   if (!hasMaterials(a) || !a.resumePath) return "materials are not ready";
   if (a.needsSignin) return "portal needs sign-in";
   if (!c.autoApplySources.includes(a.job.source)) return `auto-apply is off for ${a.job.source} jobs`;
