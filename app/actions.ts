@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db, schema } from "@/lib/db";
 import { FOLLOW_UP_DAYS, changeStage, daysFromNow, getApplication, getProfile, hasMaterials, iso, lastFinishedRun, logEvent, matchCompany } from "@/lib/logic";
+import { normalizeClosedReason } from "@/lib/outcome";
 import { renderMaterials } from "@/lib/render";
 import { startAgentRun, stopAgentRun } from "@/lib/runner";
 import { checkMailBriefly, getMailSettings, reopenEmail, resolveEmail, updateMailSettings, type Resolution } from "@/lib/mail";
@@ -139,11 +140,34 @@ export async function saveTracking(appId: number, formData: FormData) {
     nextActionDue: str(formData, "next_action_due"),
     needsSignin: formData.get("needs_signin") === "on",
   };
+  const reason = normalizeClosedReason(str(formData, "closed_reason"));
   if (stage && STAGES.includes(stage) && stage !== app.stage) {
-    const closedReason = stage === "closed" ? (str(formData, "closed_reason") ?? "withdrawn") : null;
+    const closedReason = stage === "closed" ? (reason ?? "declined") : null;
     changeStage(appId, stage, { source: "you", extra: { ...extra, closedReason } });
+  } else if (app.stage === "closed" && reason && reason !== normalizeClosedReason(app.closedReason)) {
+    // A closed application filed under the wrong reason (a rejection that was really you turning it down).
+    db.update(schema.applications).set({ ...extra, closedReason: reason }).where(eq(schema.applications.id, appId)).run();
+    logEvent({ applicationId: appId, type: "note", title: `Closed reason: ${reason.replace(/_/g, " ")}`, source: "you" });
   } else {
     db.update(schema.applications).set(extra).where(eq(schema.applications.id, appId)).run();
+  }
+  refresh();
+}
+
+// The job page's quick moves for what happened after you applied.
+export async function markOutcome(appId: number, outcome: "interviewing" | "rejected" | "declined") {
+  const app = getApplication(appId);
+  if (!app || app.stage === "closed") return;
+  if (outcome === "interviewing") {
+    if (app.stage !== "applied" && app.stage !== "screening") return;
+    changeStage(appId, "interviewing", { source: "you", extra: { needsSignin: false, nextAction: app.nextAction === "Follow up" ? null : app.nextAction, nextActionDue: app.nextAction === "Follow up" ? null : app.nextActionDue } });
+  } else {
+    if (app.stage === "found") return;
+    changeStage(appId, "closed", {
+      source: "you",
+      detail: outcome === "rejected" ? "Rejected" : "You didn't take it",
+      extra: { closedReason: outcome, nextAction: null, nextActionDue: null, needsSignin: false },
+    });
   }
   refresh();
 }

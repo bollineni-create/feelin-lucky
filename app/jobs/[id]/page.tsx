@@ -9,7 +9,8 @@ import { STAGE_LABEL, getApplicationByJob, getCriteria } from "@/lib/logic";
 import { KIND_LABEL, mailLink } from "@/lib/mail";
 import { fmtDate, fmtDateTime, modeLabel, sourceLabel } from "@/lib/format";
 import { Hl } from "@/components/Hl";
-import { addNote, approveApplication, markAppliedInternally, saveMaterials, saveTracking, undoApplication } from "../../actions";
+import { CLOSED_REASONS, CLOSED_REASON_LABEL, closedReasonLabel, normalizeClosedReason } from "@/lib/outcome";
+import { addNote, approveApplication, markAppliedInternally, markOutcome, saveMaterials, saveTracking, undoApplication } from "../../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,11 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   const editable = a.stage === "found" || a.stage === "approved";
   const internalUrl = a.internal ? getCriteria().internalJobsUrl : null;
   const answers = [...(a.answers ?? []), { question: "", answer: "" }];
+  const reason = normalizeClosedReason(a.closedReason);
+  const otherReason = reason && !(CLOSED_REASONS as readonly string[]).includes(reason) ? reason : null;
+  // After you've applied: one click for an interview, a rejection, or a job you've decided not to take.
+  const canInterview = a.stage === "applied" || a.stage === "screening";
+  const canClose = a.stage !== "found" && a.stage !== "closed";
 
   return (
     <>
@@ -39,7 +45,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
             {j.companyName} <span className="secondary" style={{ fontWeight: 500 }}>· {j.title}</span>
           </h1>
           <div className="facts btn-row small secondary" style={{ marginTop: 6 }}>
-            <span className="tag accent">{STAGE_LABEL[a.stage]}</span>
+            <span className="tag accent">{a.stage === "closed" ? `Closed: ${closedReasonLabel(a.closedReason)}` : STAGE_LABEL[a.stage]}</span>
             <span className="tag">{sourceLabel(j.source)}</span>
             {j.lookupId ? (
               <Link className="tag amber" href="/#lookups" title="Found for something you asked the agent to look for; kept whatever it scored">
@@ -180,7 +186,33 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
         <aside>
           <section className="panel">
             <h2>Tracking</h2>
-            <form action={saveTracking.bind(null, a.id)}>
+            {canInterview || canClose ? (
+              <div className="btn-row" style={{ marginBottom: 16 }}>
+                {canInterview ? (
+                  <form action={markOutcome.bind(null, a.id, "interviewing")}>
+                    <button className="btn btn-sm" type="submit">
+                      Interviewing
+                    </button>
+                  </form>
+                ) : null}
+                {canClose ? (
+                  <>
+                    <form action={markOutcome.bind(null, a.id, "rejected")}>
+                      <button className="btn btn-sm" type="submit">
+                        Rejected
+                      </button>
+                    </form>
+                    <form action={markOutcome.bind(null, a.id, "declined")}>
+                      <button className="btn btn-sm" type="submit" title="You turned it down or withdrew">
+                        I didn&apos;t take it
+                      </button>
+                    </form>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+            {/* Keyed on the stage so the fields show a move made by the buttons above, not what they held before it. */}
+            <form action={saveTracking.bind(null, a.id)} key={`${a.stage}:${a.closedReason ?? ""}`}>
               <div className="field">
                 <label htmlFor="stage">Stage</label>
                 <select className="input" id="stage" name="stage" defaultValue={a.stage}>
@@ -193,7 +225,15 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
               </div>
               <div className="field">
                 <label htmlFor="closed_reason">Closed reason (if closing)</label>
-                <input className="input" id="closed_reason" name="closed_reason" defaultValue={a.closedReason ?? ""} placeholder="rejected, withdrawn, posting_closed…" />
+                <select className="input" id="closed_reason" name="closed_reason" defaultValue={reason ?? ""}>
+                  <option value="">—</option>
+                  {CLOSED_REASONS.map((r) => (
+                    <option key={r} value={r}>
+                      {CLOSED_REASON_LABEL[r]}
+                    </option>
+                  ))}
+                  {otherReason ? <option value={otherReason}>{closedReasonLabel(otherReason)}</option> : null}
+                </select>
               </div>
               <div className="field">
                 <label htmlFor="next_action">Next action</label>
