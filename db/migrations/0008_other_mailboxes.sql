@@ -1,0 +1,1 @@
+ALTER TABLE `mail_settings` ADD `include_other_mailboxes` integer DEFAULT true NOT NULL;

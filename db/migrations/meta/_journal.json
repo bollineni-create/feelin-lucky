@@ -57,6 +57,13 @@
       "when": 1792630000000,
       "tag": "0007_current_employer",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1792657278985,
+      "tag": "0008_other_mailboxes",
+      "breakpoints": true
     }
   ]
 }

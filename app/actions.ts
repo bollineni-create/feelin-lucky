@@ -342,6 +342,7 @@ export async function saveMailSettings(formData: FormData) {
     fileEmails: formData.get("file_emails") === "on",
     flagNeedsReply: formData.get("flag_needs_reply") === "on",
     includeJunk: formData.get("include_junk") === "on",
+    includeOther: formData.get("include_other") === "on",
     notify: formData.get("notify") === "on",
     // Every account ticked reads them all, including accounts added to Mail later.
     accounts: picked.length === known.length ? [] : picked,

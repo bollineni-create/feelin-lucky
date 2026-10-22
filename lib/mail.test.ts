@@ -352,3 +352,38 @@ test("a first read with more job mail than one check reads is finished by the ne
   assert.equal(read(), 85);
   assert.equal(M.getMailSettings().backfillFrom, null);
 });
+
+test("job emails in Trash and your folders are read too: Trash is filed, your folder is left as it is", async () => {
+  const { db, schema } = D;
+  const plaidId = db.select().from(schema.companies).all().find((c) => c.name === "Plaid")!.id;
+  const j = db.insert(schema.jobs).values({ companyId: plaidId, companyName: "Plaid", source: "careers", title: "Treasury Associate", dedupeKey: "plaid-tr" }).returning().get();
+  ids["plaid-tr"] = db.insert(schema.applications).values({ jobId: j.id, stage: "applied" }).returning().get().id;
+  const k = db.insert(schema.jobs).values({ companyId: plaidId, companyName: "Plaid", source: "careers", title: "Finance Partner", dedupeKey: "plaid-fp" }).returning().get();
+  ids["plaid-fp"] = db.insert(schema.applications).values({ jobId: k.id, stage: "applied" }).returning().get().id;
+  setMail((s) => {
+    const icloud = s.accts[1];
+    const add = (name: string, msg: { messageId: string; subject: string; content: string }) => {
+      let b = icloud.boxes.find((x) => x.name === name);
+      if (!b) icloud.boxes.push((b = { name, account: icloud, msgs: [] }));
+      b.msgs.push({ id: s.nextId++, sender: "Plaid <no-reply@greenhouse-mail.io>", date: hoursAgo(3), flagged: false, junk: false, deleted: false, box: b, ...msg });
+    };
+    add("Trash", { messageId: "t1@plaid", subject: "Thanks for applying", content: "Thank you for applying for the Treasury Associate role at Plaid. We received your application." });
+    add("Recruiters", { messageId: "f1@plaid", subject: "Let's talk", content: "We'd like to schedule an interview for the Finance Partner role at Plaid. Please share your availability." });
+    add("Sent Messages", { messageId: "s1@plaid", subject: "Re: Let's talk", content: "Thank you for applying for the Finance Partner role at Plaid." });
+  });
+  assert.ok((await M.checkMail({ launch: true })).ok);
+
+  const trashed = emailBy("Thanks for applying")!;
+  assert.equal(trashed.status, "done");
+  assert.ok(app("plaid-tr").emailConfirmedAt);
+  assert.equal(trashed.filedTo, "Lodestar");
+  const mine = emailBy("Let's talk")!;
+  assert.equal(mine.applicationId, ids["plaid-fp"]);
+  assert.equal(mine.mailbox, "folder/Recruiters");
+  assert.equal(emailBy("Re: Let's talk"), undefined);
+
+  const icloud = mailState().accts[1];
+  assert.ok(icloud.boxes.find((b) => b.name === "Lodestar")!.msgs.some((m) => m.messageId === "t1@plaid"));
+  assert.equal(icloud.boxes.find((b) => b.name === "Trash")!.msgs.length, 0);
+  assert.deepEqual(icloud.boxes.find((b) => b.name === "Recruiters")!.msgs.map((m) => m.messageId), ["f1@plaid"]);
+});
