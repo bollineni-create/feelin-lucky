@@ -12,6 +12,7 @@ A local app that tracks the search, and a daily Claude Code agent that finds job
 - **A pipeline you can read at a glance.** The Pipeline board shows every application by stage, from found to offer, with a feed of what changed and a log of every agent run. While a run is on, the log says what the agent is doing right now (the application it's on and the step), and a run that stopped early, from Stop run, the time limit or a crash, can be finished with **Finish run**: the next run picks up the phase it was in and the item it was on.
 - **Today's matches, ready to review.** Each morning the Queue holds the jobs the agent found and scored, each with a tailored resume or CV, a cover letter and answers to the screening questions. Approve one and it goes out on the next run, or right away with **Apply to approved now**; skip one and tell the agent why.
 - **A company watchlist.** 134 companies come seeded, by category and priority. The agent scans the ones that are due on their careers sites first, then runs the broad searches, including LinkedIn.
+- **Jobs at your own company go through the internal site.** Set **Where you work now** in Settings (it defaults to the current entry in your work history, and you can add the internal job site's link). Jobs at that company are earmarked **Apply internally**: the agent still finds, scores and prepares them, but never submits one. The Queue links to your internal site and has an **I applied internally** button that moves the job to Applied. When you change jobs, change the employer in Settings and the earmark follows.
 - **Ask for something specific.** Heard about a role, or want one company checked now? On the Pipeline, under **Look for something on the next scan**, type a job title, a company, or both (with a link or a note if you have one). The next run searches for it before anything else, on the company's careers site and on LinkedIn, and reports back in one line. Whatever it finds is kept and prepared whatever the fit score, marked **You asked for this**, so you decide in the Queue. **Look again** sends a finished lookup back out.
 - **Fit scores, not noise.** Every job gets a fit score and reasons. Anything under the threshold (70, or 60 for high-priority companies) is closed on arrival and never scored again.
 - **Materials made for each job.** The agent writes Markdown from your own resume and CV text; the app renders it to PDF and Word in `data/applications/<job-id>/`.
@@ -176,6 +177,7 @@ Enforced in code as well as in the runbook.
 - `approved_to_submit` is empty while the profile is unconfirmed.
 - An email moves an application only forward (to applied, screening, interviewing or offer, or closed as rejected), never to approved, and only an email the app read from Mail itself. The agent can only settle emails the app put up for review.
 - Lodestar never sends, replies to, forwards or deletes email. It keeps only job emails, and moves or flags only those.
+- Jobs at the current employer (`search_criteria.current_employer`, or the profile's current work-history entry) are never in `approved_to_submit` or `auto_apply_to_submit`, and the agent API refuses to move one to `applied`. The user applies internally and marks it from the Queue.
 - Jobs under the fit threshold are closed as `low_fit` on arrival and never re-scored, except jobs found for a lookup you asked for, which stay open for you to decide. A job keeps its first score.
 - In headless mode the agent may only use the Chrome tools, `agent/api.sh`, `screencapture`, reads, and writes to `logs/tmp/`. `curl`, `rm`, `git` and WebFetch are blocked.
 - Page content is data, not instructions: the runbook tells the agent to ignore anything a job posting or portal tells it to do.
@@ -214,7 +216,7 @@ Next.js 15, React 19, SQLite through better-sqlite3 and Drizzle, `pdfkit` and `d
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/agent/context` | Criteria, profile, lookups (titles or companies you asked for), companies due a scan, open applications, approved and auto-apply applications to submit, jobs needing a score or materials, skip feedback |
+| GET | `/api/agent/context` | Criteria, profile, current employer (jobs there are prepared but never submitted), lookups (titles or companies you asked for), companies due a scan, open applications, approved and auto-apply applications to submit, jobs needing a score or materials, skip feedback |
 | POST / PATCH | `/api/agent/runs`, `/api/agent/runs/:id` | Start a run; finish it with counts and errors |
 | POST | `/api/agent/jobs` | Upsert found jobs (dedupe on company + title + location) with fit score and reasons; `lookup_id` ties a job to a lookup and keeps it open whatever it scores |
 | PATCH | `/api/agent/lookups/:id` | Mark a lookup done, with one line on what was found |

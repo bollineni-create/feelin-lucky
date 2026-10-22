@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { activeRun, autoApplyCandidates, getCriteria, getProfile, iso, queueItems, type AppWithJob } from "@/lib/logic";
+import { activeRun, autoApplyCandidates, currentEmployer, getCriteria, getProfile, iso, queueItems, type AppWithJob } from "@/lib/logic";
 import { fmtDate, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { Hl } from "@/components/Hl";
 import { RunButton } from "@/components/RunButton";
-import { approveApplication, skipApplication, submitApprovedNow, undoApplication } from "../actions";
+import { approveApplication, markAppliedInternally, skipApplication, submitApprovedNow, undoApplication } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +27,8 @@ export default function QueuePage() {
   const criteria = getCriteria();
   const running = activeRun();
   const autoIds = new Set(autoApplyCandidates().map((a) => a.id));
+  const employer = currentEmployer();
+  const internalCount = pending.filter((a) => a.internal).length;
 
   const modes = criteria.workModes;
   const criteriaLines = [
@@ -36,7 +38,8 @@ export default function QueuePage() {
     `Minimum base: ${criteria.minBase ? `$${criteria.minBase.toLocaleString("en-US")}` : "[YOUR FLOOR]"}`,
     `Fit score of ${criteria.fitThreshold} or higher (${criteria.highPriorityThreshold} for red companies)`,
     criteria.autoApply ? `Auto-apply at ${criteria.autoApplyMinScore}+, up to ${criteria.autoApplyDailyCap} a day` : "Auto-apply off: every application waits for you",
-  ];
+    employer ? `${employer} jobs: you apply through the internal job site` : null,
+  ].filter((l): l is string => Boolean(l));
 
   return (
     <div className="split" style={{ gap: 28 }}>
@@ -51,6 +54,24 @@ export default function QueuePage() {
         {!profile.confirmed ? (
           <div className="banner" role="alert">
             Your profile isn&apos;t confirmed yet, so nothing will be submitted. Confirm your titles and dates in <Link href="/settings">Settings</Link>.
+          </div>
+        ) : null}
+
+        {internalCount ? (
+          <div className="banner apply-now">
+            <span>
+              {internalCount} {internalCount === 1 ? "match is" : "matches are"} at {employer}, your current employer. Apply through the internal job site with the materials
+              here, then mark {internalCount === 1 ? "it" : "each one"} applied. The agent won&apos;t submit these.
+            </span>
+            {criteria.internalJobsUrl ? (
+              <a className="btn" href={criteria.internalJobsUrl} target="_blank" rel="noreferrer">
+                Open internal job site
+              </a>
+            ) : (
+              <Link className="btn" href="/settings#employer">
+                Add the internal site link
+              </Link>
+            )}
           </div>
         ) : null}
 
@@ -73,7 +94,7 @@ export default function QueuePage() {
 
         <div className="qcards">
           {[...pending, ...approved, ...skipped].map((a) => (
-            <QueueCard key={a.id} a={a} auto={autoIds.has(a.id)} />
+            <QueueCard key={a.id} a={a} auto={autoIds.has(a.id)} internalUrl={criteria.internalJobsUrl} />
           ))}
         </div>
       </div>
@@ -110,7 +131,7 @@ export default function QueuePage() {
   );
 }
 
-function QueueCard({ a, auto }: { a: AppWithJob; auto: boolean }) {
+function QueueCard({ a, auto, internalUrl }: { a: AppWithJob; auto: boolean; internalUrl: string | null }) {
   const j = a.job;
   const answers = a.answers ?? [];
   const where = [j.location, modeLabel(j.workMode)].filter((x, i, arr) => x && !(i === 1 && arr[0]?.toLowerCase().includes(x.toLowerCase()))).join(" · ");
@@ -130,6 +151,7 @@ function QueueCard({ a, auto }: { a: AppWithJob; auto: boolean }) {
             {where ? <span className="tag">{where}</span> : null}
             <span className="tag">Posted {j.postedAt ? fmtDate(j.postedAt) : "date n/a"}</span>
             {a.atsType ? <span className="tag">{a.atsType}</span> : null}
+            {a.internal ? <span className="tag amber" title="Your current employer: apply through the internal job site">Apply internally</span> : null}
             {auto ? <span className="tag amber">Auto-applies next run</span> : null}
           </div>
           <h2>{j.title}</h2>
@@ -179,11 +201,26 @@ function QueueCard({ a, auto }: { a: AppWithJob; auto: boolean }) {
       <div className="qactions">
         {a.stage === "found" ? (
           <>
-            <form action={approveApplication.bind(null, a.id)}>
-              <button className="btn btn-primary" type="submit">
-                Approve and submit
-              </button>
-            </form>
+            {a.internal ? (
+              <>
+                {internalUrl ? (
+                  <a className="btn btn-primary" href={internalUrl} target="_blank" rel="noreferrer">
+                    Open internal job site
+                  </a>
+                ) : null}
+                <form action={markAppliedInternally.bind(null, a.id)}>
+                  <button className="btn" type="submit">
+                    I applied internally
+                  </button>
+                </form>
+              </>
+            ) : (
+              <form action={approveApplication.bind(null, a.id)}>
+                <button className="btn btn-primary" type="submit">
+                  Approve and submit
+                </button>
+              </form>
+            )}
             <Link className="btn" href={`/jobs/${j.id}`}>
               Review materials
             </Link>

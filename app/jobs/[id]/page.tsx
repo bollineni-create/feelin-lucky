@@ -5,11 +5,11 @@ import { notFound } from "next/navigation";
 import { asc, desc, eq } from "drizzle-orm";
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { STAGES } from "@/db/schema";
-import { STAGE_LABEL, getApplicationByJob } from "@/lib/logic";
+import { STAGE_LABEL, getApplicationByJob, getCriteria } from "@/lib/logic";
 import { KIND_LABEL, mailLink } from "@/lib/mail";
 import { fmtDate, fmtDateTime, modeLabel, sourceLabel } from "@/lib/format";
 import { Hl } from "@/components/Hl";
-import { addNote, approveApplication, saveMaterials, saveTracking, undoApplication } from "../../actions";
+import { addNote, approveApplication, markAppliedInternally, saveMaterials, saveTracking, undoApplication } from "../../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +24,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   const dir = path.join(DATA_DIR, "applications", String(jobId));
   const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => !f.startsWith(".")).sort() : [];
   const editable = a.stage === "found" || a.stage === "approved";
+  const internalUrl = a.internal ? getCriteria().internalJobsUrl : null;
   const answers = [...(a.answers ?? []), { question: "", answer: "" }];
 
   return (
@@ -45,6 +46,11 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                 You asked for this
               </Link>
             ) : null}
+            {a.internal ? (
+              <Link className="tag amber" href="/settings#employer" title="Your current employer: the agent prepares this but never submits it">
+                Apply internally
+              </Link>
+            ) : null}
             {a.atsType ? <span className="tag">{a.atsType}</span> : null}
             <span>{j.location ?? "Location n/a"}</span>
             {j.workMode ? <span>{modeLabel(j.workMode)}</span> : null}
@@ -54,7 +60,21 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
           </div>
         </div>
         <div className="btn-row">
-          {a.stage === "found" ? (
+          {a.stage === "found" && a.internal ? (
+            <>
+              {internalUrl ? (
+                <a className="btn btn-primary" href={internalUrl} target="_blank" rel="noreferrer">
+                  Open internal job site
+                </a>
+              ) : null}
+              <form action={markAppliedInternally.bind(null, a.id)}>
+                <button className="btn" type="submit">
+                  I applied internally
+                </button>
+              </form>
+            </>
+          ) : null}
+          {a.stage === "found" && !a.internal ? (
             <form action={approveApplication.bind(null, a.id)}>
               <button className="btn btn-primary" type="submit" disabled={!a.resumeMd || !a.coverLetterMd}>
                 Approve and submit
@@ -76,6 +96,12 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
         </div>
       </div>
 
+      {a.internal && (a.stage === "found" || a.stage === "approved") ? (
+        <div className="banner">
+          This job is at {j.companyName}, your current employer. Apply through the internal job site using the materials below; the agent won&apos;t submit it. Then
+          click <strong>I applied internally</strong>.
+        </div>
+      ) : null}
       {a.needsSignin ? <div className="banner">This portal needs a sign-in, account or CAPTCHA. The agent won&apos;t do that; submit it yourself and set the stage to Applied.</div> : null}
 
       <div className="grid-main">

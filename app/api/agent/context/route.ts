@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, or, lt, sql } from "drizzle-o
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
 import { mailContext } from "@/lib/mail";
-import { OPEN_STAGES, pendingLookups, autoAppliedToday, bySubmitOrder, byWatchlistThenScore, autoApplyCandidates, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
+import { OPEN_STAGES, currentEmployer, pendingLookups, autoAppliedToday, bySubmitOrder, byWatchlistThenScore, autoApplyCandidates, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +15,7 @@ export const GET = agentRoute(async (req) => {
 
   sweepFollowUps();
   const criteria = getCriteria();
+  const employer = currentEmployer();
   const profile = getProfile();
   const sourceDocs = path.join(DATA_DIR, "source-docs");
 
@@ -58,7 +59,8 @@ export const GET = agentRoute(async (req) => {
     answers: a.answers ?? [],
     needs_signin: a.needsSignin,
   });
-  const approved = listApplications(eq(applications.stage, "approved")).sort(bySubmitOrder).map(toSubmit);
+  // Jobs at the current employer never go out through the agent, whatever their stage says.
+  const approved = listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal).sort(bySubmitOrder).map(toSubmit);
   const autoApply = profile.confirmed ? autoApplyCandidates().map(toSubmit) : [];
 
   const open = listApplications(inArray(applications.stage, ["found", ...OPEN_STAGES])).map((a) => ({
@@ -137,6 +139,15 @@ export const GET = agentRoute(async (req) => {
       broad_searches: criteria.broadSearches,
       notes: criteria.notes,
     },
+    // Where the user works now. Jobs there are `apply_internally: true` below: find, score and prepare them like any
+    // other, but never submit one (the server refuses `applied`); the user applies through the internal job site.
+    current_employer: employer
+      ? {
+          name: employer,
+          internal_jobs_url: criteria.internalJobsUrl,
+          rule: "Scan and prepare jobs at this company as usual, but never start or submit an application for one. The user applies internally and marks it applied.",
+        }
+      : null,
     profile: {
       confirmed: profile.confirmed,
       full_name: profile.fullName,
@@ -196,7 +207,7 @@ export const GET = agentRoute(async (req) => {
         ? "Profile is not confirmed in Settings. Do not fill or submit any application; report this in the run errors."
         : null,
     open_applications: open,
-    jobs_needing_score: needsScore.map((a) => ({ job_id: a.jobId, application_id: a.id, company: a.job.companyName, watchlist: watchlist(a), title: a.job.title, url: a.job.url, location: a.job.location, lookup_id: a.job.lookupId })),
+    jobs_needing_score: needsScore.map((a) => ({ job_id: a.jobId, application_id: a.id, company: a.job.companyName, watchlist: watchlist(a), title: a.job.title, url: a.job.url, location: a.job.location, lookup_id: a.job.lookupId, apply_internally: a.internal })),
     jobs_needing_materials: needsMaterials.map((a) => ({
       job_id: a.jobId,
       application_id: a.id,
@@ -207,6 +218,7 @@ export const GET = agentRoute(async (req) => {
       fit_score: a.job.fitScore,
       fit_reasons: a.job.fitReasons,
       lookup_id: a.job.lookupId,
+      apply_internally: a.internal,
     })),
     skip_feedback: skipFeedback,
     // Email tracking (Apple Mail): emails the app couldn't place or wasn't sure of wait in to_review for Phase D (track).
