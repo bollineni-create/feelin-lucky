@@ -6,6 +6,7 @@ import { ROOT, db, schema } from "./db";
 import type { Application, Job, Stage } from "@/db/schema";
 import { isSameEmployer } from "./employer";
 import { portalHost } from "./signin";
+import { answersReady } from "./answers";
 
 const { applications, jobs, events, companies, searchCriteria, profile, runs, lookups } = schema;
 
@@ -145,7 +146,8 @@ export const QUICK_PORTALS = ["linkedin", "greenhouse", "lever", "ashby", "smart
 export function accountsNeeded() {
   const sites = new Map<string, { host: string; portal: string; companies: string[]; count: number; flagged: number; url: string | null; flaggedAppId: number | null }>();
   for (const a of listApplications(eq(applications.stage, "approved")).sort(bySubmitOrder)) {
-    if (a.internal) continue;
+    // Past the sign-in already: these wait on the user's answers, not an account.
+    if (a.internal || a.needsAnswers) continue;
     const portal = portalOf(a);
     if (!a.needsSignin && !ACCOUNT_PORTALS.includes(portal)) continue;
     const host = portalHost(a.job.url, a.job.companyName);
@@ -169,6 +171,17 @@ export function clearSigninOnPortal(a: Pick<AppWithJob, "job">) {
     .map((x) => x.id);
   if (ids.length) db.update(applications).set({ needsSignin: false, signinCheckedAt: null }).where(inArray(applications.id, ids)).run();
   return ids.length;
+}
+
+/**
+ * Approved applications whose form asked something nothing answers yet, and whether the user has added answers since
+ * (then they go out on the next run).
+ */
+export function answersNeeded(standardAnswersUpdatedAt: string | null) {
+  return listApplications(and(eq(applications.stage, "approved"), eq(applications.needsAnswers, true)))
+    .filter((a) => !a.internal)
+    .map((a) => ({ app: a, ready: answersReady(a, standardAnswersUpdatedAt) }))
+    .sort((x, y) => x.app.job.companyName.localeCompare(y.app.job.companyName));
 }
 
 export const byWatchlistThenScore =(x: AppWithJob, y: AppWithJob) => watchTier(x) - watchTier(y) || (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0);
@@ -231,6 +244,7 @@ export function autoApplyBlocker(a: AppWithJob): string | null {
   if (a.internal) return "it's at your current employer: apply through the internal job site";
   if (!hasMaterials(a) || !a.resumePath) return "materials are not ready";
   if (a.needsSignin) return "portal needs sign-in";
+  if (a.needsAnswers) return "the form asked something you haven't answered yet";
   if (!c.autoApplySources.includes(a.job.source)) return `auto-apply is off for ${a.job.source} jobs`;
   const min = Math.max(c.autoApplyMinScore, thresholdFor(a.job.companyId));
   if (a.job.fitScore == null || a.job.fitScore < min) return `fit score below ${min}`;

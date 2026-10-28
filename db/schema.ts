@@ -113,6 +113,10 @@ export const applications = sqliteTable(
     needsSignin: integer("needs_signin", { mode: "boolean" }).notNull().default(false),
     // When the agent last found the portal's sign-in wall. Flagged items are re-checked only every few days, one per portal.
     signinCheckedAt: text("signin_checked_at"),
+    // The form asked something required that neither the profile, the standard answers nor this job's answers cover
+    // (a GPA, a clearance, a salary). Not a sign-in: it goes out again once the user adds the answer in Settings.
+    needsAnswers: integer("needs_answers", { mode: "boolean" }).notNull().default(false),
+    answersFlaggedAt: text("answers_flagged_at"),
     portalNote: text("portal_note"),
     nextAction: text("next_action"),
     nextActionDue: text("next_action_due"),
@@ -283,6 +287,7 @@ export type WorkEntry = {
   bullets?: string[];
 };
 export type EducationEntry = { school: string; degree: string; field?: string; start?: string; end?: string };
+export type StandardAnswer = { question: string; answer: string };
 
 export const profile = sqliteTable("profile", {
   id: integer("id").primaryKey(),
@@ -301,6 +306,10 @@ export const profile = sqliteTable("profile", {
   cvFile: text("cv_file"),
   resumeText: text("resume_text"),
   cvText: text("cv_text"),
+  // Answers to the questions application forms ask that the profile doesn't cover (demographics, clearance, GPA,
+  // salary, relocation), written once and used on every form.
+  standardAnswers: text("standard_answers", { mode: "json" }).$type<StandardAnswer[]>().notNull().default([]),
+  standardAnswersUpdatedAt: text("standard_answers_updated_at"),
   // Until this is true the agent must not fill or submit any application form.
   confirmed: integer("confirmed", { mode: "boolean" }).notNull().default(false),
   updatedAt: text("updated_at").notNull().$defaultFn(now),

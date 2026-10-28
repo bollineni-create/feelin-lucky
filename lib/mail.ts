@@ -221,6 +221,7 @@ function attach(e: Email, appId: number, o: { kind: EmailKind; source: Source; r
   if (to === "applied") {
     extra.submittedAt = app.submittedAt ?? e.receivedAt;
     extra.needsSignin = false;
+    extra.needsAnswers = false;
     extra.nextAction = "Follow up";
     extra.nextActionDue = iso(new Date(Date.parse(e.receivedAt) + FOLLOW_UP_DAYS * DAY));
     // A strong match the agent submitted without recording it still counts toward today's auto-apply cap.

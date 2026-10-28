@@ -95,19 +95,22 @@ trap 'on_signal "interrupted"' INT
 trap 'on_signal "hung up"' HUP
 
 # A submit-only run with nothing it may submit (approved items whose portal still wants a sign-in wait in
-# signin_waiting) has no browser work to do: close it here instead of starting Claude and Chrome for nothing.
+# signin_waiting, those whose form needs the user's answers in answers_waiting) has no browser work to do: close it here instead of starting Claude and Chrome for nothing.
 if [ "$PHASE" = "submit" ]; then
   SUBMIT_SUMMARY="$(agent/api.sh GET /api/agent/context 2>>"$LOG" | python3 -c '
 import json, sys
 c = json.load(sys.stdin)
 n = len(c.get("approved_to_submit") or []) + len(c.get("auto_apply_to_submit") or [])
 w = c.get("signin_waiting") or []
-print(n, sum(x["count"] for x in w), len(w))' 2>/dev/null)"
-  read -r TO_SUBMIT WAITING WAIT_PORTALS <<<"${SUBMIT_SUMMARY:-x 0 0}"
+print(n, sum(x["count"] for x in w), len(w), len(c.get("answers_waiting") or []))' 2>/dev/null)"
+  read -r TO_SUBMIT WAITING WAIT_PORTALS ANSWERS_WAITING <<<"${SUBMIT_SUMMARY:-x 0 0 0}"
   if [ "$TO_SUBMIT" = "0" ]; then
+    PARTS=()
+    [ "$ANSWERS_WAITING" != "0" ] && PARTS+=("$ANSWERS_WAITING approved need your answers (add them under Standard answers in Settings)")
+    [ "$WAITING" != "0" ] && PARTS+=("$WAITING approved waiting on a sign-in at $WAIT_PORTALS portal(s) (sign in and press I've signed in on the Queue)")
     NOTE="Nothing to submit"
-    [ "$WAITING" != "0" ] && NOTE="Nothing to submit: $WAITING approved waiting on a sign-in at $WAIT_PORTALS portal(s). Sign in and press I've signed in on the Queue"
-    python3 -c 'import json,sys; print(json.dumps({"status":"ok","note":sys.argv[1],"counts":{"submitted":0}}))' "$NOTE" > "logs/tmp/empty-$RUN_ID.json"
+    [ "${#PARTS[@]}" -gt 0 ] && NOTE="Nothing to submit: $(IFS=';'; echo "${PARTS[*]}" | sed 's/;/; /g')"
+    python3 -c 'import json,sys; print(json.dumps({"status":"ok","note":sys.argv[1],"counts":{"submitted":0,"needs_you":int(sys.argv[2])+int(sys.argv[3])}}))' "$NOTE" "$WAITING" "$ANSWERS_WAITING" > "logs/tmp/empty-$RUN_ID.json"
     agent/api.sh PATCH "/api/agent/runs/$RUN_ID" "logs/tmp/empty-$RUN_ID.json" >/dev/null 2>>"$LOG" || true
     log "$NOTE. Run #$RUN_ID finished: ok (no agent started)"
     exit 0

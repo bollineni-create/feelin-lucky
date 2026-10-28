@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { accountsNeeded, activeRun, autoApplyCandidates, currentEmployer, getCriteria, getProfile, iso, queueItems, type AppWithJob } from "@/lib/logic";
+import { accountsNeeded, answersNeeded, activeRun, autoApplyCandidates, currentEmployer, getCriteria, getProfile, iso, queueItems, type AppWithJob } from "@/lib/logic";
 import { fmtDate, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { Hl } from "@/components/Hl";
 import { RunButton } from "@/components/RunButton";
@@ -30,6 +30,9 @@ export default function QueuePage() {
   const employer = currentEmployer();
   const internalCount = pending.filter((a) => a.internal).length;
   const accounts = accountsNeeded();
+  const answers = answersNeeded(profile.standardAnswersUpdatedAt);
+  const answersWaiting = answers.filter((w) => !w.ready);
+  const answersReadyIds = new Set(answers.filter((w) => w.ready).map((w) => w.app.id));
 
   const modes = criteria.workModes;
   const criteriaLines = [
@@ -86,6 +89,28 @@ export default function QueuePage() {
           </div>
         ) : null}
 
+        {answersWaiting.length ? (
+          <details className="panel" open>
+            <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+              {answersWaiting.length} approved {answersWaiting.length === 1 ? "job needs" : "jobs need"} your answers, not a sign-in
+            </summary>
+            <p className="secondary" style={{ margin: "10px 0 12px" }}>
+              Their forms ask something your profile doesn&apos;t cover. Answer it once under Standard answers in Settings and every waiting job goes out on the next
+              run, along with any later form that asks the same thing.
+            </p>
+            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+              {answersWaiting.map(({ app }) => (
+                <li key={app.id}>
+                  <strong>{app.job.companyName}</strong> <span className="secondary">· {app.job.title}{app.portalNote ? ` · ${app.portalNote}` : ""}</span>
+                </li>
+              ))}
+            </ul>
+            <Link className="btn btn-sm" href="/settings#answers">
+              Add standard answers
+            </Link>
+          </details>
+        ) : null}
+
         {accounts.length ? (
           <details className="panel" open={accounts.some((s) => s.flagged)}>
             <summary style={{ cursor: "pointer", fontWeight: 600 }}>
@@ -135,7 +160,7 @@ export default function QueuePage() {
 
         <div className="qcards">
           {[...pending, ...approved, ...skipped].map((a) => (
-            <QueueCard key={a.id} a={a} auto={autoIds.has(a.id)} internalUrl={criteria.internalJobsUrl} />
+            <QueueCard key={a.id} a={a} auto={autoIds.has(a.id)} answersAdded={answersReadyIds.has(a.id)} internalUrl={criteria.internalJobsUrl} />
           ))}
         </div>
       </div>
@@ -172,7 +197,7 @@ export default function QueuePage() {
   );
 }
 
-function QueueCard({ a, auto, internalUrl }: { a: AppWithJob; auto: boolean; internalUrl: string | null }) {
+function QueueCard({ a, auto, answersAdded, internalUrl }: { a: AppWithJob; auto: boolean; answersAdded: boolean; internalUrl: string | null }) {
   const j = a.job;
   const answers = a.answers ?? [];
   const where = [j.location, modeLabel(j.workMode)].filter((x, i, arr) => x && !(i === 1 && arr[0]?.toLowerCase().includes(x.toLowerCase()))).join(" · ");
@@ -237,7 +262,14 @@ function QueueCard({ a, auto, internalUrl }: { a: AppWithJob; auto: boolean; int
           {a.portalNote ?? "This portal needs an account or sign-in."} Make the account (or sign in) in Chrome and let Chrome save the password, then press I've signed in: the agent tries every approved job on this portal on the next run. Otherwise it looks again every few days.
         </div>
       ) : null}
-      {!a.needsSignin && needsYou ? (
+      {a.needsAnswers ? (
+        <div className="flag">
+          {answersAdded
+            ? "You've added answers since the form asked for them. It goes out on the next run."
+            : <>Needs your answers: {a.portalNote ?? "the form asked something your profile doesn't cover"}. Add them under <Link href="/settings#answers">Standard answers</Link>; it goes out on the next run.</>}
+        </div>
+      ) : null}
+      {!a.needsSignin && !a.needsAnswers && needsYou ? (
         <div className="flag">
           {needsYou} screening {needsYou === 1 ? "answer needs" : "answers need"} your input. Fill {needsYou === 1 ? "it" : "them"} in under Review materials.
         </div>
