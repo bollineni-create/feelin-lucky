@@ -7,6 +7,7 @@ import { db, schema } from "@/lib/db";
 import { FOLLOW_UP_DAYS, changeStage, clearSigninOnPortal, daysFromNow, getApplication, getProfile, hasMaterials, iso, lastFinishedRun, logEvent, matchCompany } from "@/lib/logic";
 import { normalizeClosedReason } from "@/lib/outcome";
 import { renderMaterials } from "@/lib/render";
+import { parseStandardAnswers } from "@/lib/answers";
 import { startAgentRun, stopAgentRun } from "@/lib/runner";
 import { checkMailBriefly, getMailSettings, reopenEmail, resolveEmail, updateMailSettings, type Resolution } from "@/lib/mail";
 import { ApiError } from "@/lib/agent-auth";
@@ -45,7 +46,7 @@ export async function markAppliedInternally(appId: number) {
   changeStage(appId, "applied", {
     source: "you",
     detail: "Applied through the internal job site",
-    extra: { submittedAt: iso(), needsSignin: false, portalNote: "Applied internally", nextAction: "Follow up", nextActionDue: iso(daysFromNow(FOLLOW_UP_DAYS)) },
+    extra: { submittedAt: iso(), needsSignin: false, needsAnswers: false, portalNote: "Applied internally", nextAction: "Follow up", nextActionDue: iso(daysFromNow(FOLLOW_UP_DAYS)) },
   });
   refresh();
 }
@@ -148,6 +149,8 @@ export async function saveTracking(appId: number, formData: FormData) {
     nextAction: str(formData, "next_action"),
     nextActionDue: str(formData, "next_action_due"),
     needsSignin: formData.get("needs_signin") === "on",
+    needsAnswers: formData.get("needs_answers") === "on",
+    answersFlaggedAt: formData.get("needs_answers") === "on" ? (app.needsAnswers ? app.answersFlaggedAt : iso()) : null,
   };
   const reason = normalizeClosedReason(str(formData, "closed_reason"));
   if (stage && STAGES.includes(stage) && stage !== app.stage) {
@@ -169,13 +172,13 @@ export async function markOutcome(appId: number, outcome: "interviewing" | "reje
   if (!app || app.stage === "closed") return;
   if (outcome === "interviewing") {
     if (app.stage !== "applied" && app.stage !== "screening") return;
-    changeStage(appId, "interviewing", { source: "you", extra: { needsSignin: false, nextAction: app.nextAction === "Follow up" ? null : app.nextAction, nextActionDue: app.nextAction === "Follow up" ? null : app.nextActionDue } });
+    changeStage(appId, "interviewing", { source: "you", extra: { needsSignin: false, needsAnswers: false, nextAction: app.nextAction === "Follow up" ? null : app.nextAction, nextActionDue: app.nextAction === "Follow up" ? null : app.nextActionDue } });
   } else {
     if (app.stage === "found") return;
     changeStage(appId, "closed", {
       source: "you",
       detail: outcome === "rejected" ? "Rejected" : "You didn't take it",
-      extra: { closedReason: outcome, nextAction: null, nextActionDue: null, needsSignin: false },
+      extra: { closedReason: outcome, nextAction: null, nextActionDue: null, needsSignin: false, needsAnswers: false },
     });
   }
   refresh();
@@ -303,6 +306,19 @@ export async function saveProfile(formData: FormData) {
     .run();
   refresh();
   redirect(confirmed && hasPlaceholders ? "/settings?error=placeholders" : "/settings?saved=profile");
+}
+
+export async function saveStandardAnswers(formData: FormData) {
+  const standardAnswers = parseStandardAnswers((k) => str(formData, k), str(formData, "extra_answers") ?? "");
+  const before = JSON.stringify(getProfile().standardAnswers);
+  // Only a real change releases the applications waiting on answers, so saving the same page twice doesn't resend them.
+  const changed = JSON.stringify(standardAnswers) !== before;
+  db.update(schema.profile)
+    .set({ standardAnswers, ...(changed ? { standardAnswersUpdatedAt: iso() } : {}) })
+    .where(eq(schema.profile.id, 1))
+    .run();
+  refresh();
+  redirect("/settings?saved=answers#answers");
 }
 
 export async function saveCriteria(formData: FormData) {

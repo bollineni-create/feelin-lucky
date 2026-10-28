@@ -223,6 +223,7 @@ h2.section { font-size: 18px; font-weight: 600; }
 .status-ok { color: var(--accent-text); }
 .status-failed { color: var(--danger); }
 .status-running { color: var(--amber); }
+.status-nothing { color: var(--amber); font-weight: 600; }
 .run-errors { margin: 2px 0 0; padding-left: 16px; }
 .run-errors li { margin: 2px 0; }
 .run-log { margin-top: 4px; }

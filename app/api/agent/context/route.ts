@@ -4,6 +4,7 @@ import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
 import { mailContext } from "@/lib/mail";
 import { splitSigninWaits } from "@/lib/signin";
+import { splitAnswerWaits } from "@/lib/answers";
 import { OPEN_STAGES, currentEmployer, pendingLookups, autoAppliedToday, bySubmitOrder, byWatchlistQuickThenScore, byWatchlistThenScore, autoApplyCandidates, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
@@ -60,10 +61,16 @@ export const GET = agentRoute(async (req) => {
     answers: a.answers ?? [],
     needs_signin: a.needsSignin,
     signin_checked_at: a.signinCheckedAt,
+    // Flagged on an earlier run for a question nothing answered; the user has added answers since. `missing` is
+    // what the form asked: look for it in profile.standard_answers and this item's answers.
+    needs_answers: a.needsAnswers,
+    missing: a.needsAnswers ? a.portalNote : null,
   });
   // Jobs at the current employer never go out through the agent, whatever their stage says.
   // Items whose portal wanted a sign-in go out one per portal, every few days; the rest of them wait (signin_waiting).
-  const approvedSplit = splitSigninWaits(listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal).sort(bySubmitOrder));
+  // Items flagged for a form question nothing answered wait until the user adds an answer (answers_waiting).
+  const answersSplit = splitAnswerWaits(listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal), profile.standardAnswersUpdatedAt);
+  const approvedSplit = splitSigninWaits(answersSplit.ready.sort(bySubmitOrder));
   const approved = approvedSplit.toSubmit.map(toSubmit);
   const autoApply = profile.confirmed ? autoApplyCandidates().map(toSubmit) : [];
 
@@ -169,6 +176,9 @@ export const GET = agentRoute(async (req) => {
       cv_source_file: profile.cvFile ? path.join(sourceDocs, profile.cvFile) : null,
       resume_text: profile.resumeText,
       cv_text: profile.cvText,
+      // The user's answers to questions forms ask that the rest of the profile doesn't cover. Use them on every
+      // form, matching by meaning, not wording. An answer like "leave it for me" means: don't submit, flag needs_answers.
+      standard_answers: profile.standardAnswers,
       document_rule:
         "Resume for corporate, finance, tech and fintech roles. CV for think tanks, universities, international organizations (OECD, World Bank, IMF, UN) and health or research roles.",
     },
@@ -200,6 +210,9 @@ export const GET = agentRoute(async (req) => {
     // this run: they come back in approved_to_submit after recheck_after, as soon as one on the same portal goes
     // through, or when the user says they've signed in.
     signin_waiting: profile.confirmed ? approvedSplit.waiting : [],
+    // Approved applications held back because their form asked something nothing answers yet. Not yours to open this
+    // run: they come back in approved_to_submit once the user adds answers in Settings or on the job.
+    answers_waiting: profile.confirmed ? answersSplit.waiting : [],
     auto_apply: {
       enabled: criteria.autoApply && profile.confirmed,
       min_score: criteria.autoApplyMinScore,

@@ -2,9 +2,10 @@ import fs from "node:fs";
 import Link from "next/link";
 import path from "node:path";
 import { DATA_DIR } from "@/lib/db";
-import { currentEmployer, getCriteria, getProfile } from "@/lib/logic";
+import { answersNeeded, currentEmployer, getCriteria, getProfile } from "@/lib/logic";
+import { STANDARD_QUESTIONS, extraAnswerLines } from "@/lib/answers";
 import { fmtDateTime } from "@/lib/format";
-import { saveCriteria, saveProfile } from "../actions";
+import { saveCriteria, saveProfile, saveStandardAnswers } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const has = (f: string | null) => Boolean(f && fs.existsSync(path.join(docDir, f)));
   const placeholders = /\[(CONFIRM|TITLE)[^\]]*\]/i.test(JSON.stringify(p.workHistory));
   const employer = currentEmployer();
+  const answerOf = new Map(p.standardAnswers.map((a) => [a.question, a.answer]));
+  const waiting = answersNeeded(p.standardAnswersUpdatedAt).filter((w) => !w.ready);
+  // Field names follow the flat question order, as parseStandardAnswers reads them.
+  const offsets = STANDARD_QUESTIONS.map((_, gi) => STANDARD_QUESTIONS.slice(0, gi).reduce((n, g) => n + g.questions.length, 0));
 
   return (
     <>
@@ -29,7 +34,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         </div>
       </div>
 
-      {sp.saved ? <div className="banner ok">Saved {sp.saved === "profile" ? "profile" : "search criteria"}.</div> : null}
+      {sp.saved ? (
+        <div className="banner ok">
+          Saved {sp.saved === "profile" ? "profile" : sp.saved === "answers" ? "standard answers. Applications that were waiting on them go out on the next run" : "search criteria"}.
+        </div>
+      ) : null}
       {sp.error === "json" ? <div className="banner">Work history and education must be valid JSON arrays. Nothing was saved.</div> : null}
       {sp.error === "placeholders" ? <div className="banner">Saved, but the profile stays unconfirmed while the work history still has [CONFIRM] or [TITLE] placeholders.</div> : null}
 
@@ -220,6 +229,58 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           </section>
         </aside>
       </div>
+
+      <section className="panel" id="answers" style={{ marginTop: 24 }}>
+        <h2>Standard answers</h2>
+        <p className="secondary" style={{ marginTop: 4 }}>
+          Questions application forms ask that your profile doesn&apos;t cover. Answer once and the agent uses them on every form. A blank one stays blank: if a
+          form requires it, that application waits here instead of going out. Saving releases the approved applications that were waiting, on the next run.
+        </p>
+        {waiting.length ? (
+          <div className="banner">
+            <div>
+              {waiting.length} approved {waiting.length === 1 ? "application is" : "applications are"} waiting on answers:
+            </div>
+            <ul className="bullets" style={{ margin: "6px 0 0" }}>
+              {waiting.map((w) => (
+                <li key={w.app.id}>
+                  <Link href={`/jobs/${w.app.jobId}`}>
+                    {w.app.job.companyName}: {w.app.job.title}
+                  </Link>
+                  {w.app.portalNote ? <span className="muted"> · {w.app.portalNote}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        <form action={saveStandardAnswers}>
+          {STANDARD_QUESTIONS.map((g, gi) => (
+            <fieldset key={g.group} className="field" style={{ border: 0, padding: 0, margin: "16px 0 0" }}>
+              <legend className="label-caps">{g.group}</legend>
+              {g.hint ? <span className="small muted">{g.hint}</span> : null}
+              <div className="row2" style={{ marginTop: 8 }}>
+                {g.questions.map((q, qi) => {
+                  const i = offsets[gi] + qi;
+                  return (
+                    <div className="field" key={q}>
+                      <label htmlFor={`sa_${i}`}>{q}</label>
+                      <input className="input" id={`sa_${i}`} name={`sa_${i}`} defaultValue={answerOf.get(q) ?? ""} />
+                    </div>
+                  );
+                })}
+              </div>
+            </fieldset>
+          ))}
+          <div className="field" style={{ marginTop: 16 }}>
+            <label htmlFor="extra_answers">Other questions (one per line: question | answer)</label>
+            <textarea className="input" id="extra_answers" name="extra_answers" rows={5} defaultValue={extraAnswerLines(p.standardAnswers)} placeholder="Willing to travel 25%? | Yes" />
+          </div>
+          <button className="btn btn-primary" type="submit">
+            Save standard answers
+          </button>
+          {p.standardAnswersUpdatedAt ? <span className="small muted" style={{ marginLeft: 12 }}>Last changed {fmtDateTime(p.standardAnswersUpdatedAt)}</span> : null}
+        </form>
+      </section>
     </>
   );
 }

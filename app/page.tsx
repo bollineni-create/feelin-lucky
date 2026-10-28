@@ -8,6 +8,7 @@ import { RunButton } from "@/components/RunButton";
 import { getMailSettings } from "@/lib/mail";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { closedOutcome, closedReasonLabel } from "@/lib/outcome";
+import { runSentNothing } from "@/lib/answers";
 import { addLookup, redoLookup, removeLookup, resumeRun, runNow, stopRun, submitApprovedNow } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +37,7 @@ function whereText(a: AppWithJob) {
 function nextText(a: AppWithJob) {
   if (a.stage === "closed") return closedOutcome(a) === "other" ? closedReasonLabel(a.closedReason) : null;
   if (a.needsSignin) return "Sign in to the portal";
+  if (a.needsAnswers) return "Answer the form's questions";
   if (a.nextAction) return a.nextActionDue ? `${a.nextAction} ${fmtDate(a.nextActionDue)}` : a.nextAction;
   if (a.stage === "approved") return "Submitting on next run";
   if (a.stage === "applied") return "Watch portal for a response";
@@ -438,6 +440,8 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                   const errors = (r.errors ?? []).filter((e) => !names.some((re) => re.test(e)));
                   // What the agent says it's on beats what the transcript suggests; the latter is the fallback.
                   const showNote = r.note && (isRunning || runUnfinished(r));
+                  // "ok" only says the run worked; one that sent nothing while applications wait on you says so.
+                  const sentNothing = runSentNothing(r);
                   return [
                     <tr key={r.id}>
                       <td className="mono nowrap">
@@ -445,7 +449,13 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                         <div className="muted">{r.trigger.replace(/-/g, " ")}</div>
                       </td>
                       <td className="nowrap">
-                        <span className={`status-${r.status}`}>{r.status}</span>
+                        {sentNothing ? (
+                          <span className="status-nothing" title="The run worked, but every application it had was left for you: a sign-in or answers the form needs">
+                            nothing sent — {sentNothing} need you
+                          </span>
+                        ) : (
+                          <span className={`status-${r.status}`}>{r.status}</span>
+                        )}
                       </td>
                       <td>
                         {r.phase.split(",").join(", ")}

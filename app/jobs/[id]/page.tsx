@@ -109,6 +109,12 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
         </div>
       ) : null}
       {a.needsSignin ? <div className="banner">This portal needs a sign-in, account or CAPTCHA. The agent won&apos;t do that; submit it yourself and set the stage to Applied.</div> : null}
+      {a.needsAnswers ? (
+        <div className="banner">
+          The form asked something your profile doesn&apos;t cover{a.portalNote ? `: ${a.portalNote}` : ""}. Add it under <Link href="/settings#answers">Standard answers</Link>, or in
+          the screening answers below, and it goes out on the next run.
+        </div>
+      ) : null}
 
       <div className="grid-main">
         <div>
@@ -245,6 +251,9 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
               </div>
               <label className="check">
                 <input type="checkbox" name="needs_signin" defaultChecked={a.needsSignin} /> Portal needs my sign-in
+              </label>
+              <label className="check">
+                <input type="checkbox" name="needs_answers" defaultChecked={a.needsAnswers} /> Form needs my answers
               </label>
               <div className="field">
                 <label htmlFor="notes">Notes</label>
