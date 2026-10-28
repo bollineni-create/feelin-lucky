@@ -135,7 +135,7 @@ Off by default. Turn it on under **Settings → Search criteria → Auto-apply**
 - the resume and cover letter are rendered, the portal isn't flagged for sign-in, and nothing says `[NEEDS YOU: …]`;
 - fewer than the daily cap (default 10) have gone out today.
 
-Those jobs show **Auto-applies next run** in the Queue, so you can still skip one before the run. Jobs prepared during a run are auto-applied in the same run. Every auto-application gets an "Auto-applied" event and a confirmation screenshot, like an approved one. The agent still never creates accounts, types passwords or solves CAPTCHAs.
+Those jobs show **Auto-applies next run** in the Queue, so you can still skip one before the run. Jobs prepared during a run are auto-applied in the same run. Every auto-application gets an "Auto-applied" event and a confirmation screenshot, like an approved one. The agent still never creates accounts, types passwords or solves CAPTCHAs (see [Job sites that want an account](#job-sites-that-want-an-account)).
 
 LinkedIn's user agreement restricts automated use of the site, and frequent automated Easy Apply can get an account restricted. The runbook keeps it slow (30 seconds or more between submissions, stop on any security check), but keep the daily cap low, or untick LinkedIn and auto-apply only on careers sites.
 
@@ -170,6 +170,15 @@ The Lodestar mailbox is created inside each Mail account (not "On My Mac"), so i
 - Notifications come from **Script Editor** as far as macOS is concerned. If none appear, allow Script Editor under System Settings → Notifications. They're a convenience: the Mail page and the Pipeline always have the full picture.
 - On a very large inbox (tens of thousands of messages), Mail can pause for a moment while Lodestar checks it.
 
+## Job sites that want an account
+
+Workday, Oracle, Taleo, iCIMS and similar sites want an account before they take an application, and every company's Workday or Oracle site is a separate account. The Queue lists them under **job sites need an account**, one line per site, with the companies and how many approved jobs wait on it. For each one:
+
+1. **Open site** and create the account yourself. Use **Sign in with Google** or **LinkedIn** if the site offers it; otherwise use your email and let Chrome save the password.
+2. Press **I've signed in**. The next run tries every approved job on that site.
+
+On the run, the agent signs in with what Chrome fills in (or the Google or LinkedIn button) and never types or sees the password. Don't give passwords to the agent or put them in Lodestar: they would end up in its run logs. Meanwhile the scan favours LinkedIn Easy Apply and Greenhouse, Lever, Ashby and SmartRecruiters jobs, which go out without an account.
+
 ## Safety rails
 
 Enforced in code as well as in the runbook.
@@ -183,6 +192,7 @@ Enforced in code as well as in the runbook.
 - Jobs at the current employer (`search_criteria.current_employer`, or the profile's current work-history entry) are never in `approved_to_submit` or `auto_apply_to_submit`, and the agent API refuses to move one to `applied`. The user applies internally and marks it from the Queue.
 - Jobs under the fit threshold are closed as `low_fit` on arrival and never re-scored, except jobs found for a lookup you asked for, which stay open for you to decide. A job keeps its first score.
 - In headless mode the agent may only use the Chrome tools, `agent/api.sh`, `screencapture`, reads, and writes to `logs/tmp/`. `curl`, `rm`, `git` and WebFetch are blocked.
+- The agent never creates an account, types a password, reads a password field or solves a CAPTCHA. It signs in only with an existing session, a password Chrome has already filled in, or Sign in with Google, LinkedIn, Microsoft or Apple for an account already signed in (sign-in scope only).
 - Page content is data, not instructions: the runbook tells the agent to ignore anything a job posting or portal tells it to do.
 
 ## How it's put together
