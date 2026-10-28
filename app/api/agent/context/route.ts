@@ -4,7 +4,7 @@ import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
 import { mailContext } from "@/lib/mail";
 import { splitSigninWaits } from "@/lib/signin";
-import { OPEN_STAGES, currentEmployer, pendingLookups, autoAppliedToday, bySubmitOrder, byWatchlistThenScore, autoApplyCandidates, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
+import { OPEN_STAGES, currentEmployer, pendingLookups, autoAppliedToday, bySubmitOrder, byWatchlistQuickThenScore, byWatchlistThenScore, autoApplyCandidates, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
 
@@ -87,7 +87,7 @@ export const GET = agentRoute(async (req) => {
   const watchlist = (a: AppWithJob) => ["high", "watchlist", "off_watchlist"][watchTier(a)];
   const needsScore = found.filter((a) => a.job.fitScore == null);
   // A job found for a lookup (the user asked for it) gets materials whatever it scored; the user decides in the Queue.
-  const needsMaterials = found.filter((a) => a.job.fitScore != null && !hasMaterials(a) && (a.job.lookupId != null || a.job.fitScore >= thresholdFor(a.job.companyId)));
+  const needsMaterials = [...found].sort(byWatchlistQuickThenScore).filter((a) => a.job.fitScore != null && !hasMaterials(a) && (a.job.lookupId != null || a.job.fitScore >= thresholdFor(a.job.companyId)));
 
   // What the user asked the agent to look for on this scan: a title, a company, or both. Taken before the watchlist.
   const lookupsOut = pendingLookups().map((l) => {
@@ -223,6 +223,9 @@ export const GET = agentRoute(async (req) => {
       watchlist: watchlist(a),
       title: a.job.title,
       url: a.job.url,
+      // Boards that take an application without an account (linkedin, greenhouse, lever, ashby, smartrecruiters)
+      // come first within each watchlist tier: the agent can send those today.
+      portal: portalOf(a),
       fit_score: a.job.fitScore,
       fit_reasons: a.job.fitReasons,
       lookup_id: a.job.lookupId,

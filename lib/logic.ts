@@ -133,6 +133,34 @@ const PORTAL_RANK: Record<string, number> = { linkedin: 0, greenhouse: 0, lever:
 export const bySubmitOrder = (x: AppWithJob, y: AppWithJob) =>
   Number(x.needsSignin) - Number(y.needsSignin) || (PORTAL_RANK[portalOf(x)] ?? 1) - (PORTAL_RANK[portalOf(y)] ?? 1) || x.stageChangedAt.localeCompare(y.stageChangedAt);
 
+/** Portals that want an account before they take an application (each Workday or Oracle tenant is its own). */
+export const ACCOUNT_PORTALS = ["workday", "oracle", "taleo", "eightfold", "successfactors", "icims", "paylocity"];
+/** Boards that take an application without an account: these are the ones the agent can send today. */
+export const QUICK_PORTALS = ["linkedin", "greenhouse", "lever", "ashby", "smartrecruiters"];
+
+/**
+ * The job sites where approved applications wait on an account: those already flagged "needs sign-in", plus
+ * those on account portals the agent hasn't tried yet. One entry per site, so the user makes each account once.
+ */
+export function accountsNeeded() {
+  const sites = new Map<string, { host: string; portal: string; companies: string[]; count: number; flagged: number; url: string | null; flaggedAppId: number | null }>();
+  for (const a of listApplications(eq(applications.stage, "approved")).sort(bySubmitOrder)) {
+    if (a.internal) continue;
+    const portal = portalOf(a);
+    if (!a.needsSignin && !ACCOUNT_PORTALS.includes(portal)) continue;
+    const host = portalHost(a.job.url, a.job.companyName);
+    const s = sites.get(host) ?? { host, portal, companies: [], count: 0, flagged: 0, url: a.job.url, flaggedAppId: null };
+    s.count++;
+    if (a.needsSignin) {
+      s.flagged++;
+      s.flaggedAppId ??= a.id;
+    }
+    if (!s.companies.includes(a.job.companyName)) s.companies.push(a.job.companyName);
+    sites.set(host, s);
+  }
+  return [...sites.values()].sort((x, y) => y.count - x.count || x.host.localeCompare(y.host));
+}
+
 /** Clears "needs sign-in" on every approved application on the same portal as `a` (one sign-in covers them all). */
 export function clearSigninOnPortal(a: Pick<AppWithJob, "job">) {
   const host = portalHost(a.job.url, a.job.companyName);
@@ -144,6 +172,11 @@ export function clearSigninOnPortal(a: Pick<AppWithJob, "job">) {
 }
 
 export const byWatchlistThenScore =(x: AppWithJob, y: AppWithJob) => watchTier(x) - watchTier(y) || (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0);
+
+/** Phase C order: watchlist tier, then jobs on boards that take an application without an account (the agent can
+ * send those today), then fit score. */
+export const byWatchlistQuickThenScore = (x: AppWithJob, y: AppWithJob) =>
+  watchTier(x) - watchTier(y) || Number(!QUICK_PORTALS.includes(portalOf(x))) - Number(!QUICK_PORTALS.includes(portalOf(y))) || (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0);
 
 export function listApplications(where?: ReturnType<typeof and>): AppWithJob[] {
   const rows = db

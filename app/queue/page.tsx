@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { activeRun, autoApplyCandidates, currentEmployer, getCriteria, getProfile, iso, queueItems, type AppWithJob } from "@/lib/logic";
+import { accountsNeeded, activeRun, autoApplyCandidates, currentEmployer, getCriteria, getProfile, iso, queueItems, type AppWithJob } from "@/lib/logic";
 import { fmtDate, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { Hl } from "@/components/Hl";
 import { RunButton } from "@/components/RunButton";
@@ -29,6 +29,7 @@ export default function QueuePage() {
   const autoIds = new Set(autoApplyCandidates().map((a) => a.id));
   const employer = currentEmployer();
   const internalCount = pending.filter((a) => a.internal).length;
+  const accounts = accountsNeeded();
 
   const modes = criteria.workModes;
   const criteriaLines = [
@@ -85,6 +86,46 @@ export default function QueuePage() {
           </div>
         ) : null}
 
+        {accounts.length ? (
+          <details className="panel" open={accounts.some((s) => s.flagged)}>
+            <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+              {accounts.length} job {accounts.length === 1 ? "site needs" : "sites need"} an account before the agent can apply ({accounts.reduce((n, s) => n + s.count, 0)} approved{" "}
+              {accounts.reduce((n, s) => n + s.count, 0) === 1 ? "job" : "jobs"})
+            </summary>
+            <p className="secondary" style={{ margin: "10px 0 12px" }}>
+              Each Workday or Oracle site is its own account. Open the site, create the account with Sign in with Google or LinkedIn if it offers it,
+              otherwise with your email, and let Chrome save the password. Then press I&apos;ve signed in: the agent signs in with Chrome&apos;s saved
+              password on the next run and sends every approved job on that site. It never types or sees the password.
+            </p>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+              {accounts.map((s) => (
+                <li key={s.host} style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                  <span>
+                    <strong>{s.companies.join(", ")}</strong>{" "}
+                    <span className="secondary">
+                      · {s.portal} · {s.count} approved{s.flagged ? ` · asked for a sign-in` : " · not tried yet"}
+                    </span>
+                  </span>
+                  <span style={{ display: "flex", gap: 8 }}>
+                    {s.url ? (
+                      <a className="btn btn-sm" href={s.url} target="_blank" rel="noreferrer">
+                        Open site
+                      </a>
+                    ) : null}
+                    {s.flaggedAppId ? (
+                      <form action={markSignedIn.bind(null, s.flaggedAppId)}>
+                        <button className="btn btn-sm" type="submit">
+                          I&apos;ve signed in
+                        </button>
+                      </form>
+                    ) : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+
         {items.length === 0 ? (
           <div className="panel">
             <h2>Nothing to review</h2>
@@ -124,7 +165,7 @@ export default function QueuePage() {
         </div>
         <div className="panel-dark" style={{ fontSize: 13 }}>
           <div style={{ color: "var(--panel-dark-head)", fontWeight: 600, fontSize: 14, marginBottom: 6 }}>Needs you</div>
-          Portals that require a new account or sign-in are flagged instead of filled. You sign in once; the agent picks up from there on the next run.
+          The agent never creates accounts or types passwords. On a site that wants an account, make it once yourself and let Chrome save the password; the agent signs in with what Chrome fills in, or with Sign in with Google or LinkedIn, and picks up from there on the next run.
         </div>
       </aside>
     </div>
@@ -193,7 +234,7 @@ function QueueCard({ a, auto, internalUrl }: { a: AppWithJob; auto: boolean; int
 
       {a.needsSignin ? (
         <div className="flag">
-          {a.portalNote ?? "This portal needs an account or sign-in."} Sign in to it in Chrome, then press I've signed in: the agent tries every approved job on this portal on the next run. Otherwise it looks again every few days.
+          {a.portalNote ?? "This portal needs an account or sign-in."} Make the account (or sign in) in Chrome and let Chrome save the password, then press I've signed in: the agent tries every approved job on this portal on the next run. Otherwise it looks again every few days.
         </div>
       ) : null}
       {!a.needsSignin && needsYou ? (
