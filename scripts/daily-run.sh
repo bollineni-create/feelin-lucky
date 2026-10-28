@@ -94,6 +94,26 @@ trap 'on_signal "stopped"' TERM
 trap 'on_signal "interrupted"' INT
 trap 'on_signal "hung up"' HUP
 
+# A submit-only run with nothing it may submit (approved items whose portal still wants a sign-in wait in
+# signin_waiting) has no browser work to do: close it here instead of starting Claude and Chrome for nothing.
+if [ "$PHASE" = "submit" ]; then
+  SUBMIT_SUMMARY="$(agent/api.sh GET /api/agent/context 2>>"$LOG" | python3 -c '
+import json, sys
+c = json.load(sys.stdin)
+n = len(c.get("approved_to_submit") or []) + len(c.get("auto_apply_to_submit") or [])
+w = c.get("signin_waiting") or []
+print(n, sum(x["count"] for x in w), len(w))' 2>/dev/null)"
+  read -r TO_SUBMIT WAITING WAIT_PORTALS <<<"${SUBMIT_SUMMARY:-x 0 0}"
+  if [ "$TO_SUBMIT" = "0" ]; then
+    NOTE="Nothing to submit"
+    [ "$WAITING" != "0" ] && NOTE="Nothing to submit: $WAITING approved waiting on a sign-in at $WAIT_PORTALS portal(s). Sign in and press I've signed in on the Queue"
+    python3 -c 'import json,sys; print(json.dumps({"status":"ok","note":sys.argv[1],"counts":{"submitted":0}}))' "$NOTE" > "logs/tmp/empty-$RUN_ID.json"
+    agent/api.sh PATCH "/api/agent/runs/$RUN_ID" "logs/tmp/empty-$RUN_ID.json" >/dev/null 2>>"$LOG" || true
+    log "$NOTE. Run #$RUN_ID finished: ok (no agent started)"
+    exit 0
+  fi
+fi
+
 if ! command -v claude >/dev/null 2>&1; then fail_run "claude CLI not found on PATH"; exit 1; fi
 if ! claude --help 2>/dev/null | grep -q -- "$CHROME_FLAG"; then
   fail_run "This Claude Code has no $CHROME_FLAG flag. Update Claude Code, or set CLAUDE_CHROME_FLAG in .env to the flag 'claude --help' lists."

@@ -3,7 +3,7 @@ import { activeRun, autoApplyCandidates, currentEmployer, getCriteria, getProfil
 import { fmtDate, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { Hl } from "@/components/Hl";
 import { RunButton } from "@/components/RunButton";
-import { approveApplication, markAppliedInternally, skipApplication, submitApprovedNow, undoApplication } from "../actions";
+import { approveApplication, markAppliedInternally, markSignedIn, skipApplication, submitApprovedNow, undoApplication } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -191,7 +191,11 @@ function QueueCard({ a, auto, internalUrl }: { a: AppWithJob; auto: boolean; int
         </div>
       </div>
 
-      {a.needsSignin ? <div className="flag">{a.portalNote ?? "This portal needs an account or sign-in. Sign in once and the agent finishes the form on the next run."}</div> : null}
+      {a.needsSignin ? (
+        <div className="flag">
+          {a.portalNote ?? "This portal needs an account or sign-in."} Sign in to it in Chrome, then press I've signed in: the agent tries every approved job on this portal on the next run. Otherwise it looks again every few days.
+        </div>
+      ) : null}
       {!a.needsSignin && needsYou ? (
         <div className="flag">
           {needsYou} screening {needsYou === 1 ? "answer needs" : "answers need"} your input. Fill {needsYou === 1 ? "it" : "them"} in under Review materials.
@@ -247,6 +251,13 @@ function QueueCard({ a, auto, internalUrl }: { a: AppWithJob; auto: boolean; int
             <span className="done-text" style={{ color: a.stage === "approved" ? "var(--accent-text)" : "var(--ink-2)" }}>
               {a.stage === "approved" ? "Approved. Goes out when you apply to approved jobs, or on the next run." : `Skipped (${a.skipReason}). Similar postings will rank lower.`}
             </span>
+            {a.stage === "approved" && a.needsSignin ? (
+              <form action={markSignedIn.bind(null, a.id)}>
+                <button className="btn" type="submit" style={{ padding: "10px 14px" }}>
+                  I've signed in
+                </button>
+              </form>
+            ) : null}
             <form action={undoApplication.bind(null, a.id)}>
               <button className="btn" type="submit" style={{ padding: "10px 14px" }}>
                 Undo

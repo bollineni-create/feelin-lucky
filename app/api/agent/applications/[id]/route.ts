@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { ApiError, agentRoute, intParam, parseBody } from "@/lib/agent-auth";
-import { FOLLOW_UP_DAYS, autoApplyCandidates, autoApplyBlocker, changeStage, daysFromNow, getApplication, iso, logEvent } from "@/lib/logic";
+import { FOLLOW_UP_DAYS, autoApplyCandidates, autoApplyBlocker, changeStage, clearSigninOnPortal, daysFromNow, getApplication, iso, logEvent } from "@/lib/logic";
 import { normalizeClosedReason } from "@/lib/outcome";
 import { STAGES, type Application, type Stage } from "@/db/schema";
 
@@ -44,6 +44,7 @@ export const PATCH = agentRoute(async (req, params) => {
   if (b.confirmation_text !== undefined) extra.confirmationText = b.confirmation_text;
   if (b.linkedin_status !== undefined) extra.linkedinStatus = b.linkedin_status;
   if (b.needs_signin !== undefined) extra.needsSignin = b.needs_signin;
+  if (b.needs_signin === true) extra.signinCheckedAt = iso();
 
   if (b.stage && b.stage !== app.stage) {
     let detail = b.detail ?? b.closed_reason ?? null;
@@ -76,6 +77,8 @@ export const PATCH = agentRoute(async (req, params) => {
       if (b.next_action === undefined) extra.nextAction = null;
     }
     const updated = changeStage(id, b.stage, { source: "agent", detail, extra });
+    // It got through, so the portal's sign-in works now: the others approved on it go out with the next context.
+    if (b.stage === "applied") clearSigninOnPortal(app);
     return { application: updated };
   }
 

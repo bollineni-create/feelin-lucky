@@ -5,6 +5,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, sql } from "drizzle-
 import { ROOT, db, schema } from "./db";
 import type { Application, Job, Stage } from "@/db/schema";
 import { isSameEmployer } from "./employer";
+import { portalHost } from "./signin";
 
 const { applications, jobs, events, companies, searchCriteria, profile, runs, lookups } = schema;
 
@@ -131,6 +132,16 @@ export function portalOf(a: Pick<AppWithJob, "atsType"> & { job: Pick<AppWithJob
 const PORTAL_RANK: Record<string, number> = { linkedin: 0, greenhouse: 0, lever: 0, ashby: 0, smartrecruiters: 0, custom: 1, workday: 2, oracle: 2, taleo: 2, eightfold: 2, successfactors: 2, icims: 2 };
 export const bySubmitOrder = (x: AppWithJob, y: AppWithJob) =>
   Number(x.needsSignin) - Number(y.needsSignin) || (PORTAL_RANK[portalOf(x)] ?? 1) - (PORTAL_RANK[portalOf(y)] ?? 1) || x.stageChangedAt.localeCompare(y.stageChangedAt);
+
+/** Clears "needs sign-in" on every approved application on the same portal as `a` (one sign-in covers them all). */
+export function clearSigninOnPortal(a: Pick<AppWithJob, "job">) {
+  const host = portalHost(a.job.url, a.job.companyName);
+  const ids = listApplications(and(eq(applications.stage, "approved"), eq(applications.needsSignin, true)))
+    .filter((x) => portalHost(x.job.url, x.job.companyName) === host)
+    .map((x) => x.id);
+  if (ids.length) db.update(applications).set({ needsSignin: false, signinCheckedAt: null }).where(inArray(applications.id, ids)).run();
+  return ids.length;
+}
 
 export const byWatchlistThenScore =(x: AppWithJob, y: AppWithJob) => watchTier(x) - watchTier(y) || (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0);
 

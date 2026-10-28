@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db, schema } from "@/lib/db";
-import { FOLLOW_UP_DAYS, changeStage, daysFromNow, getApplication, getProfile, hasMaterials, iso, lastFinishedRun, logEvent, matchCompany } from "@/lib/logic";
+import { FOLLOW_UP_DAYS, changeStage, clearSigninOnPortal, daysFromNow, getApplication, getProfile, hasMaterials, iso, lastFinishedRun, logEvent, matchCompany } from "@/lib/logic";
 import { normalizeClosedReason } from "@/lib/outcome";
 import { renderMaterials } from "@/lib/render";
 import { startAgentRun, stopAgentRun } from "@/lib/runner";
@@ -47,6 +47,15 @@ export async function markAppliedInternally(appId: number) {
     detail: "Applied through the internal job site",
     extra: { submittedAt: iso(), needsSignin: false, portalNote: "Applied internally", nextAction: "Follow up", nextActionDue: iso(daysFromNow(FOLLOW_UP_DAYS)) },
   });
+  refresh();
+}
+
+/** The user signed in to the portal: every approved application on it goes to the agent again on the next run. */
+export async function markSignedIn(appId: number) {
+  const app = getApplication(appId);
+  if (!app || !app.needsSignin) return;
+  const n = clearSigninOnPortal(app);
+  logEvent({ applicationId: appId, type: "note", title: "You signed in to the portal", detail: n > 1 ? `${n} approved applications on it go out on the next run` : null, source: "you" });
   refresh();
 }
 

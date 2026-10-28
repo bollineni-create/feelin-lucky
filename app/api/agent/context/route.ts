@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, or, lt, sql } from "drizzle-o
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
 import { mailContext } from "@/lib/mail";
+import { splitSigninWaits } from "@/lib/signin";
 import { OPEN_STAGES, currentEmployer, pendingLookups, autoAppliedToday, bySubmitOrder, byWatchlistThenScore, autoApplyCandidates, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
@@ -58,9 +59,12 @@ export const GET = agentRoute(async (req) => {
     cover_letter_docx: a.coverLetterPath?.replace(/\.pdf$/, ".docx") ?? null,
     answers: a.answers ?? [],
     needs_signin: a.needsSignin,
+    signin_checked_at: a.signinCheckedAt,
   });
   // Jobs at the current employer never go out through the agent, whatever their stage says.
-  const approved = listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal).sort(bySubmitOrder).map(toSubmit);
+  // Items whose portal wanted a sign-in go out one per portal, every few days; the rest of them wait (signin_waiting).
+  const approvedSplit = splitSigninWaits(listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal).sort(bySubmitOrder));
+  const approved = approvedSplit.toSubmit.map(toSubmit);
   const autoApply = profile.confirmed ? autoApplyCandidates().map(toSubmit) : [];
 
   const open = listApplications(inArray(applications.stage, ["found", ...OPEN_STAGES])).map((a) => ({
@@ -192,6 +196,10 @@ export const GET = agentRoute(async (req) => {
       .orderBy(asc(companies.name))
       .all(),
     approved_to_submit: profile.confirmed ? approved : [],
+    // Approved applications held back because their portal still wanted a sign-in when last checked. Not yours to open
+    // this run: they come back in approved_to_submit after recheck_after, as soon as one on the same portal goes
+    // through, or when the user says they've signed in.
+    signin_waiting: profile.confirmed ? approvedSplit.waiting : [],
     auto_apply: {
       enabled: criteria.autoApply && profile.confirmed,
       min_score: criteria.autoApplyMinScore,
