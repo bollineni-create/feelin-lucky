@@ -165,13 +165,12 @@ Today is $(date +%Y-%m-%d)."
 
 # sleep: the runbook has the agent wait between tries when the extension doesn't answer, and pace LinkedIn.
 ALLOWED="Read,Glob,Grep,Edit(logs/tmp/**),Bash(agent/api.sh:*),Bash(screencapture:*),Bash(sleep:*),$CHROME_TOOLS"
-# Claude Code's Bash sandbox has no screen access ("screencapture is not available in this sandbox"), so the
-# confirmation screenshots came back as text only. screencapture alone runs outside the sandbox; it still has to
-# pass the allowed-tools check above. The Terminal (or launchd) that starts the run needs Screen Recording
-# permission in System Settings → Privacy & Security for it to capture anything.
-# The sandbox also blocks connections to the app on 127.0.0.1 ("connection refused" while the app is up), so
-# agent/api.sh runs outside it too. It only ever calls the local app, and still has to pass the allowed-tools check.
-RUN_SETTINGS='{"sandbox":{"excludedCommands":["screencapture *","agent/api.sh *"]}}'
+# The run turns Claude Code's Bash sandbox off, whatever ~/.claude/settings.json says. The sandbox blocks
+# connections to the app on 127.0.0.1 ("Failed to connect to 127.0.0.1 port 3000" while the app is up) and has no
+# screen access for screencapture. It also auto-approves any command it runs, which would let the agent past the
+# allowed tools above; with it off, those are all the agent can run. The Terminal (or launchd) that starts the run
+# needs Screen Recording permission in System Settings → Privacy & Security for screencapture to capture anything.
+RUN_SETTINGS='{"sandbox":{"enabled":false}}'
 
 log "Starting Claude Code (max ${MAX_MINUTES}m)…"
 # Claude Code's stderr goes to the run log, except the MCP SDK's "[mcp-sdk] ..." warnings about its own
