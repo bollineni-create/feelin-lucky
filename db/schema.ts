@@ -111,6 +111,8 @@ export const applications = sqliteTable(
     confirmationScreenshot: text("confirmation_screenshot"),
     confirmationText: text("confirmation_text"),
     needsSignin: integer("needs_signin", { mode: "boolean" }).notNull().default(false),
+    // When the agent last found the portal's sign-in wall. Flagged items are re-checked only every few days, one per portal.
+    signinCheckedAt: text("signin_checked_at"),
     portalNote: text("portal_note"),
     nextAction: text("next_action"),
     nextActionDue: text("next_action_due"),

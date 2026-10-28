@@ -1,0 +1,1 @@
+ALTER TABLE `applications` ADD `signin_checked_at` text;
