@@ -1,0 +1,1 @@
+ALTER TABLE `applications` ADD `needs_answers` integer DEFAULT false NOT NULL;

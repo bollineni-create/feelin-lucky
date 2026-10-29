@@ -12,6 +12,7 @@ const Body = z.object({
   next_action: z.string().nullable().optional(),
   next_action_due: z.string().nullable().optional(),
   needs_signin: z.boolean().optional(),
+  needs_answers: z.boolean().optional(),
   portal_note: z.string().nullable().optional(),
   closed_reason: z.string().optional(),
   confirmation_text: z.string().optional(),
@@ -45,6 +46,9 @@ export const PATCH = agentRoute(async (req, params) => {
   if (b.linkedin_status !== undefined) extra.linkedinStatus = b.linkedin_status;
   if (b.needs_signin !== undefined) extra.needsSignin = b.needs_signin;
   if (b.needs_signin === true) extra.signinCheckedAt = iso();
+  if (b.needs_answers !== undefined) extra.needsAnswers = b.needs_answers;
+  // One reason per application: a form that opened without an account isn't behind a sign-in.
+  if (b.needs_answers === true && b.needs_signin === undefined) extra.needsSignin = false;
 
   if (b.stage && b.stage !== app.stage) {
     let detail = b.detail ?? b.closed_reason ?? null;
@@ -63,6 +67,7 @@ export const PATCH = agentRoute(async (req, params) => {
     if (b.stage === "applied") {
       extra.submittedAt = b.submitted_at ?? iso();
       extra.needsSignin = false;
+      extra.needsAnswers = false;
       extra.nextAction ??= "Follow up";
       extra.nextActionDue ??= iso(daysFromNow(FOLLOW_UP_DAYS));
     }
@@ -84,6 +89,9 @@ export const PATCH = agentRoute(async (req, params) => {
 
   if (b.needs_signin === true && !app.needsSignin) {
     logEvent({ applicationId: id, type: "portal_update", title: "Needs you: portal sign-in", detail: b.portal_note ?? b.detail ?? "Portal asked for an account, password or CAPTCHA." });
+  }
+  if (b.needs_answers === true && !app.needsAnswers) {
+    logEvent({ applicationId: id, type: "portal_update", title: "Needs you: answers for the form", detail: b.portal_note ?? b.detail ?? "The form asks for something the profile doesn't have." });
   }
   if (!Object.keys(extra).length) return { application: app, unchanged: true };
   const updated = db.update(schema.applications).set(extra).where(eq(schema.applications.id, id)).returning().get();

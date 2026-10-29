@@ -62,8 +62,11 @@ export const GET = agentRoute(async (req) => {
     signin_checked_at: a.signinCheckedAt,
   });
   // Jobs at the current employer never go out through the agent, whatever their stage says.
+  // Items whose form needs answers the user hasn't given yet wait until they add them (answers_waiting).
   // Items whose portal wanted a sign-in go out one per portal, every few days; the rest of them wait (signin_waiting).
-  const approvedSplit = splitSigninWaits(listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal).sort(bySubmitOrder));
+  const approvedAll = listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal);
+  const answersWaiting = approvedAll.filter((a) => a.needsAnswers);
+  const approvedSplit = splitSigninWaits(approvedAll.filter((a) => !a.needsAnswers).sort(bySubmitOrder));
   const approved = approvedSplit.toSubmit.map(toSubmit);
   const autoApply = profile.confirmed ? autoApplyCandidates().map(toSubmit) : [];
 
@@ -200,6 +203,11 @@ export const GET = agentRoute(async (req) => {
     // this run: they come back in approved_to_submit after recheck_after, as soon as one on the same portal goes
     // through, or when the user says they've signed in.
     signin_waiting: profile.confirmed ? approvedSplit.waiting : [],
+    // Approved applications whose form asks for something the user hasn't answered yet (portal_note names it). Not
+    // yours this run either: they come back in approved_to_submit once the user adds the answers.
+    answers_waiting: profile.confirmed
+      ? answersWaiting.map((a) => ({ application_id: a.id, company: a.job.companyName, title: a.job.title, missing: a.portalNote }))
+      : [],
     auto_apply: {
       enabled: criteria.autoApply && profile.confirmed,
       min_score: criteria.autoApplyMinScore,

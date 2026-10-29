@@ -45,7 +45,7 @@ export async function markAppliedInternally(appId: number) {
   changeStage(appId, "applied", {
     source: "you",
     detail: "Applied through the internal job site",
-    extra: { submittedAt: iso(), needsSignin: false, portalNote: "Applied internally", nextAction: "Follow up", nextActionDue: iso(daysFromNow(FOLLOW_UP_DAYS)) },
+    extra: { submittedAt: iso(), needsSignin: false, needsAnswers: false, portalNote: "Applied internally", nextAction: "Follow up", nextActionDue: iso(daysFromNow(FOLLOW_UP_DAYS)) },
   });
   refresh();
 }
@@ -56,6 +56,15 @@ export async function markSignedIn(appId: number) {
   if (!app || !app.needsSignin) return;
   const n = clearSigninOnPortal(app);
   logEvent({ applicationId: appId, type: "note", title: "You signed in to the portal", detail: n > 1 ? `${n} approved applications on it go out on the next run` : null, source: "you" });
+  refresh();
+}
+
+/** The user added what the form asked for: the agent tries the application again on the next run. */
+export async function markAnswered(appId: number) {
+  const app = getApplication(appId);
+  if (!app || !app.needsAnswers) return;
+  db.update(schema.applications).set({ needsAnswers: false }).where(eq(schema.applications.id, appId)).run();
+  logEvent({ applicationId: appId, type: "note", title: "You added the form's answers", detail: "Goes out on the next run", source: "you" });
   refresh();
 }
 
@@ -132,6 +141,8 @@ export async function saveMaterials(appId: number, formData: FormData) {
       resumePath: rendered.resumePath,
       coverLetterPath: rendered.coverLetterPath,
       materialsUpdatedAt: iso(),
+      // Editing the answers is how the user gives the form what it asked for: let the agent try again.
+      needsAnswers: false,
     })
     .where(eq(schema.applications.id, appId))
     .run();
@@ -148,6 +159,7 @@ export async function saveTracking(appId: number, formData: FormData) {
     nextAction: str(formData, "next_action"),
     nextActionDue: str(formData, "next_action_due"),
     needsSignin: formData.get("needs_signin") === "on",
+    needsAnswers: formData.get("needs_answers") === "on",
   };
   const reason = normalizeClosedReason(str(formData, "closed_reason"));
   if (stage && STAGES.includes(stage) && stage !== app.stage) {

@@ -113,6 +113,9 @@ export const applications = sqliteTable(
     needsSignin: integer("needs_signin", { mode: "boolean" }).notNull().default(false),
     // When the agent last found the portal's sign-in wall. Flagged items are re-checked only every few days, one per portal.
     signinCheckedAt: text("signin_checked_at"),
+    // The form opened without an account but asks for something the profile and answers don't have (portal_note names it).
+    // Held out of the agent's list until the user adds the answers; a sign-in wouldn't help.
+    needsAnswers: integer("needs_answers", { mode: "boolean" }).notNull().default(false),
     portalNote: text("portal_note"),
     nextAction: text("next_action"),
     nextActionDue: text("next_action_due"),

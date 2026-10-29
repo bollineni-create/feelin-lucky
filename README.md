@@ -234,7 +234,7 @@ Next.js 15, React 19, SQLite through better-sqlite3 and Drizzle, `pdfkit` and `d
 | POST | `/api/agent/jobs` | Upsert found jobs (dedupe on company + title + location) with fit score and reasons; `lookup_id` ties a job to a lookup and keeps it open whatever it scores |
 | PATCH | `/api/agent/lookups/:id` | Mark a lookup done, with one line on what was found |
 | POST | `/api/agent/jobs/:id/materials` | Resume/CV, cover letter and answers as Markdown; rendered to PDF and DOCX in `data/applications/<job-id>/` |
-| PATCH | `/api/agent/applications/:id` | Stage, `submitted_at`, `next_action`, `needs_signin`, … |
+| PATCH | `/api/agent/applications/:id` | Stage, `submitted_at`, `next_action`, `needs_signin`, `needs_answers`, … |
 | POST | `/api/agent/events` | Feed updates |
 | POST | `/api/agent/screenshots` | Confirmation screenshot (multipart or base64) and/or text |
 | PATCH | `/api/agent/companies/:id` | `careers_url`, `ats_type`, `scanned` |
