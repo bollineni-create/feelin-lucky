@@ -3,7 +3,7 @@ import { accountsNeeded, activeRun, autoApplyCandidates, currentEmployer, getCri
 import { fmtDate, modeLabel, shortCity, sourceLabel } from "@/lib/format";
 import { Hl } from "@/components/Hl";
 import { RunButton } from "@/components/RunButton";
-import { approveApplication, markAppliedInternally, markSignedIn, skipApplication, submitApprovedNow, undoApplication } from "../actions";
+import { approveApplication, markAnswered, markAppliedInternally, markSignedIn, skipApplication, submitApprovedNow, undoApplication } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +30,7 @@ export default function QueuePage() {
   const employer = currentEmployer();
   const internalCount = pending.filter((a) => a.internal).length;
   const accounts = accountsNeeded();
+  const needAnswers = approved.filter((a) => a.needsAnswers && !a.internal);
 
   const modes = criteria.workModes;
   const criteriaLines = [
@@ -119,6 +120,39 @@ export default function QueuePage() {
                         </button>
                       </form>
                     ) : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+
+        {needAnswers.length ? (
+          <details className="panel" open>
+            <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+              {needAnswers.length} approved {needAnswers.length === 1 ? "form asks" : "forms ask"} for answers you haven&apos;t given yet
+            </summary>
+            <p className="secondary" style={{ margin: "10px 0 12px" }}>
+              These open without an account, so signing in won&apos;t help. The agent stopped because a required question has no answer in your
+              profile or the prepared answers. Add the answer under Review materials and save (or press I&apos;ve added the answers), and it goes
+              out on the next run.
+            </p>
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+              {needAnswers.map((a) => (
+                <li key={a.id} style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                  <span style={{ flex: "1 1 320px" }}>
+                    <strong>{a.job.companyName}</strong> <span className="secondary">· {a.job.title}</span>
+                    {a.portalNote ? <span className="secondary" style={{ display: "block", fontSize: 13 }}>{a.portalNote}</span> : null}
+                  </span>
+                  <span style={{ display: "flex", gap: 8 }}>
+                    <Link className="btn btn-sm" href={`/jobs/${a.job.id}`}>
+                      Review materials
+                    </Link>
+                    <form action={markAnswered.bind(null, a.id)}>
+                      <button className="btn btn-sm" type="submit">
+                        I&apos;ve added the answers
+                      </button>
+                    </form>
                   </span>
                 </li>
               ))}
@@ -237,7 +271,12 @@ function QueueCard({ a, auto, internalUrl }: { a: AppWithJob; auto: boolean; int
           {a.portalNote ?? "This portal needs an account or sign-in."} Make the account (or sign in) in Chrome and let Chrome save the password, then press I've signed in: the agent tries every approved job on this portal on the next run. Otherwise it looks again every few days.
         </div>
       ) : null}
-      {!a.needsSignin && needsYou ? (
+      {a.needsAnswers ? (
+        <div className="flag">
+          {a.portalNote ?? "The form asks for something your profile doesn't have."} Add it under Review materials and save, or press I've added the answers: the agent tries again on the next run.
+        </div>
+      ) : null}
+      {!a.needsSignin && !a.needsAnswers && needsYou ? (
         <div className="flag">
           {needsYou} screening {needsYou === 1 ? "answer needs" : "answers need"} your input. Fill {needsYou === 1 ? "it" : "them"} in under Review materials.
         </div>
@@ -292,6 +331,13 @@ function QueueCard({ a, auto, internalUrl }: { a: AppWithJob; auto: boolean; int
             <span className="done-text" style={{ color: a.stage === "approved" ? "var(--accent-text)" : "var(--ink-2)" }}>
               {a.stage === "approved" ? "Approved. Goes out when you apply to approved jobs, or on the next run." : `Skipped (${a.skipReason}). Similar postings will rank lower.`}
             </span>
+            {a.stage === "approved" && a.needsAnswers ? (
+              <form action={markAnswered.bind(null, a.id)}>
+                <button className="btn" type="submit" style={{ padding: "10px 14px" }}>
+                  I've added the answers
+                </button>
+              </form>
+            ) : null}
             {a.stage === "approved" && a.needsSignin ? (
               <form action={markSignedIn.bind(null, a.id)}>
                 <button className="btn" type="submit" style={{ padding: "10px 14px" }}>

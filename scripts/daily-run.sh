@@ -102,11 +102,14 @@ import json, sys
 c = json.load(sys.stdin)
 n = len(c.get("approved_to_submit") or []) + len(c.get("auto_apply_to_submit") or [])
 w = c.get("signin_waiting") or []
-print(n, sum(x["count"] for x in w), len(w))' 2>/dev/null)"
-  read -r TO_SUBMIT WAITING WAIT_PORTALS <<<"${SUBMIT_SUMMARY:-x 0 0}"
+print(n, sum(x["count"] for x in w), len(w), len(c.get("answers_waiting") or []))' 2>/dev/null)"
+  read -r TO_SUBMIT WAITING WAIT_PORTALS ANSWERS <<<"${SUBMIT_SUMMARY:-x 0 0 0}"
   if [ "$TO_SUBMIT" = "0" ]; then
+    WHY=()
+    [ "$WAITING" != "0" ] && WHY+=("$WAITING approved waiting on a sign-in at $WAIT_PORTALS portal(s): sign in and press I've signed in on the Queue")
+    [ "${ANSWERS:-0}" != "0" ] && WHY+=("$ANSWERS approved waiting on answers only you can give: add them under Review materials")
     NOTE="Nothing to submit"
-    [ "$WAITING" != "0" ] && NOTE="Nothing to submit: $WAITING approved waiting on a sign-in at $WAIT_PORTALS portal(s). Sign in and press I've signed in on the Queue"
+    [ ${#WHY[@]} -gt 0 ] && NOTE="Nothing to submit: $(IFS=';'; echo "${WHY[*]}" | sed 's/;/; /g')"
     python3 -c 'import json,sys; print(json.dumps({"status":"ok","note":sys.argv[1],"counts":{"submitted":0}}))' "$NOTE" > "logs/tmp/empty-$RUN_ID.json"
     agent/api.sh PATCH "/api/agent/runs/$RUN_ID" "logs/tmp/empty-$RUN_ID.json" >/dev/null 2>>"$LOG" || true
     log "$NOTE. Run #$RUN_ID finished: ok (no agent started)"

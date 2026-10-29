@@ -36,6 +36,7 @@ function whereText(a: AppWithJob) {
 function nextText(a: AppWithJob) {
   if (a.stage === "closed") return closedOutcome(a) === "other" ? closedReasonLabel(a.closedReason) : null;
   if (a.needsSignin) return "Sign in to the portal";
+  if (a.needsAnswers) return "Answer the form's questions";
   if (a.nextAction) return a.nextActionDue ? `${a.nextAction} ${fmtDate(a.nextActionDue)}` : a.nextAction;
   if (a.stage === "approved") return "Submitting on next run";
   if (a.stage === "applied") return "Watch portal for a response";
