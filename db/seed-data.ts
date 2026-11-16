@@ -73,7 +73,7 @@ export const SEED_APPLICATIONS: {
 
 export const SEED_CRITERIA = {
   primaryLocations: ["Seattle, WA", "Boston, MA"],
-  secondaryLocations: ["Los Angeles, CA", "Chicago, IL", "Washington, DC"],
+  secondaryLocations: ["New York, NY", "San Francisco, CA", "Los Angeles, CA", "Chicago, IL", "Washington, DC", "Dallas, TX", "Miami, FL", "Philadelphia, PA", "Atlanta, GA", "Portland, OR"],
   workModes: ["remote", "hybrid", "onsite"],
   functions: [
     "Corporate development",

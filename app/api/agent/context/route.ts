@@ -3,8 +3,9 @@ import { and, asc, eq, inArray, isNotNull, isNull, or, lt, sql } from "drizzle-o
 import { db, schema, DATA_DIR } from "@/lib/db";
 import { agentRoute } from "@/lib/agent-auth";
 import { mailContext } from "@/lib/mail";
-import { splitSigninWaits } from "@/lib/signin";
-import { OPEN_STAGES, currentEmployer, pendingLookups, autoAppliedToday, bySubmitOrder, byWatchlistQuickThenScore, byWatchlistThenScore, autoApplyCandidates, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
+import { onFeed } from "@/lib/feeds";
+import { triageScore } from "@/lib/triage";
+import { OPEN_STAGES, currentEmployer, pendingLookups, byWatchlistQuickThenScore, byWatchlistThenScore, lastFinishedRun, portalOf, daysAgo, getCriteria, getProfile, hasMaterials, iso, listApplications, sweepFollowUps, thresholdFor, watchTier, type AppWithJob } from "@/lib/logic";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,9 @@ const { companies, applications, jobs } = schema;
 export const GET = agentRoute(async (req) => {
   const url = new URL(req.url);
   const companyLimit = Math.min(Number(url.searchParams.get("companies_limit") ?? 40) || 40, 200);
+  // How many unscored jobs one run is given to score. The job-board feeds can bring in hundreds at once; the most
+  // promising go first (lib/triage.ts) and the rest wait for the next run.
+  const scoreLimit = Math.min(Number(url.searchParams.get("score_limit") ?? process.env.LODESTAR_SCORE_LIMIT ?? 80) || 80, 500);
 
   sweepFollowUps();
   const criteria = getCriteria();
@@ -40,36 +44,6 @@ export const GET = agentRoute(async (req) => {
   const dueNormal = companiesDue.filter((c) => c.priority !== "high");
   const companiesToScan = [...dueHigh, ...dueNormal.slice(0, Math.max(10, companyLimit - dueHigh.length))];
 
-  const toSubmit = (a: AppWithJob) => ({
-    application_id: a.id,
-    job_id: a.jobId,
-    company: a.job.companyName,
-    title: a.job.title,
-    url: a.job.url,
-    source: a.job.source,
-    ats_type: a.atsType,
-    // The portal the application goes through, from the company's ATS or the posting's host. Quick boards
-    // (linkedin, greenhouse, lever, ashby, smartrecruiters) come first in the list; workday, oracle, taleo,
-    // eightfold, successfactors and icims usually want an account and come last.
-    portal: portalOf(a),
-    resume_version: a.resumeVersion,
-    resume_file: a.resumePath,
-    resume_docx: a.resumePath?.replace(/\.pdf$/, ".docx") ?? null,
-    cover_letter_file: a.coverLetterPath,
-    cover_letter_docx: a.coverLetterPath?.replace(/\.pdf$/, ".docx") ?? null,
-    answers: a.answers ?? [],
-    needs_signin: a.needsSignin,
-    signin_checked_at: a.signinCheckedAt,
-  });
-  // Jobs at the current employer never go out through the agent, whatever their stage says.
-  // Items whose form needs answers the user hasn't given yet wait until they add them (answers_waiting).
-  // Items whose portal wanted a sign-in go out one per portal, every few days; the rest of them wait (signin_waiting).
-  const approvedAll = listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal);
-  const answersWaiting = approvedAll.filter((a) => a.needsAnswers);
-  const approvedSplit = splitSigninWaits(approvedAll.filter((a) => !a.needsAnswers).sort(bySubmitOrder));
-  const approved = approvedSplit.toSubmit.map(toSubmit);
-  const autoApply = profile.confirmed ? autoApplyCandidates().map(toSubmit) : [];
-
   const open = listApplications(inArray(applications.stage, ["found", ...OPEN_STAGES])).map((a) => ({
     application_id: a.id,
     job_id: a.jobId,
@@ -88,7 +62,11 @@ export const GET = agentRoute(async (req) => {
 
   const found = listApplications(eq(applications.stage, "found")).sort(byWatchlistThenScore);
   const watchlist = (a: AppWithJob) => ["high", "watchlist", "off_watchlist"][watchTier(a)];
-  const needsScore = found.filter((a) => a.job.fitScore == null);
+  const triage = (a: AppWithJob) =>
+    triageScore({ title: a.job.title, location: a.job.location, workMode: a.job.workMode, postedAt: a.job.postedAt, priority: a.companyPriority, lookupId: a.job.lookupId }, criteria);
+  const unscored = found.filter((a) => a.job.fitScore == null).map((a) => ({ a, t: triage(a) }));
+  unscored.sort((x, y) => y.t - x.t);
+  const needsScore = unscored.slice(0, scoreLimit).map((x) => x.a);
   // A job found for a lookup (the user asked for it) gets materials whatever it scored; the user decides in the Queue.
   const needsMaterials = [...found].sort(byWatchlistQuickThenScore).filter((a) => a.job.fitScore != null && !hasMaterials(a) && (a.job.lookupId != null || a.job.fitScore >= thresholdFor(a.job.companyId)));
 
@@ -189,6 +167,9 @@ export const GET = agentRoute(async (req) => {
       last_scanned_at: c.lastScannedAt,
       // What stopped the last scan, if anything (e.g. a site Claude in Chrome won't open). Try once; if it's still blocked, move on.
       scan_note: c.scanNote,
+      // The app reads this company's job board itself (Greenhouse, Lever, Ashby, SmartRecruiters, Workday). It's only
+      // due here when that read failed; scan it in Chrome as usual.
+      on_feed: onFeed(c),
     })),
     companies_due_total: companiesDue.length,
     // The whole watchlist (not paused), so LinkedIn results can be checked against it.
@@ -198,32 +179,15 @@ export const GET = agentRoute(async (req) => {
       .where(inArray(companies.priority, ["high", "normal"]))
       .orderBy(asc(companies.name))
       .all(),
-    approved_to_submit: profile.confirmed ? approved : [],
-    // Approved applications held back because their portal still wanted a sign-in when last checked. Not yours to open
-    // this run: they come back in approved_to_submit after recheck_after, as soon as one on the same portal goes
-    // through, or when the user says they've signed in.
-    signin_waiting: profile.confirmed ? approvedSplit.waiting : [],
-    // Approved applications whose form asks for something the user hasn't answered yet (portal_note names it). Not
-    // yours this run either: they come back in approved_to_submit once the user adds the answers.
-    answers_waiting: profile.confirmed
-      ? answersWaiting.map((a) => ({ application_id: a.id, company: a.job.companyName, title: a.job.title, missing: a.portalNote }))
-      : [],
-    auto_apply: {
-      enabled: criteria.autoApply && profile.confirmed,
-      min_score: criteria.autoApplyMinScore,
-      daily_cap: criteria.autoApplyDailyCap,
-      applied_today: autoAppliedToday(),
-      sources: criteria.autoApplySources,
-    },
-    // Strong matches the agent may submit without an approval (auto-apply on). Re-fetch after Phase C: newly prepared jobs land here.
-    auto_apply_to_submit: autoApply,
-    submit_blocked_reason: profile.confirmed
-      ? null
-      : approved.length
-        ? "Profile is not confirmed in Settings. Do not fill or submit any application; report this in the run errors."
-        : null,
+    // Lodestar doesn't apply. Jobs the user sends to the apply queue are applied to by a separate agent (Claude or a
+    // Grok bot, agent/APPLY.md). This run never opens an application form or clicks Apply / Easy Apply / Submit.
+    apply_queue_count: listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal).length,
     open_applications: open,
-    jobs_needing_score: needsScore.map((a) => ({ job_id: a.jobId, application_id: a.id, company: a.job.companyName, watchlist: watchlist(a), title: a.job.title, url: a.job.url, location: a.job.location, lookup_id: a.job.lookupId, apply_internally: a.internal })),
+    // `has_description`: the posting's text is already stored (job-board feeds store it). Read it with
+    // GET /api/agent/jobs/:job_id instead of opening the page in Chrome.
+    // Most promising first; `jobs_needing_score_total` counts the ones still waiting beyond this run's share.
+    jobs_needing_score_total: unscored.length,
+    jobs_needing_score: needsScore.map((a) => ({ job_id: a.jobId, application_id: a.id, company: a.job.companyName, watchlist: watchlist(a), title: a.job.title, url: a.job.url, location: a.job.location, has_description: Boolean(a.job.description), lookup_id: a.job.lookupId, apply_internally: a.internal })),
     jobs_needing_materials: needsMaterials.map((a) => ({
       job_id: a.jobId,
       application_id: a.id,

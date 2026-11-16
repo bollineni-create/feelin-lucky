@@ -38,7 +38,7 @@ if (!starter && current.updatedAt > fileTime && !process.argv.includes("--force"
     .run();
   const criteria = data.criteria as Record<string, unknown> | undefined;
   if (criteria) {
-    const keys = ["autoApply", "autoApplySources", "autoApplyMinScore", "autoApplyDailyCap", "minBase"] as const;
+    const keys = ["minBase", "primaryLocations", "secondaryLocations", "functions"] as const;
     const set = Object.fromEntries(keys.filter((k) => k in criteria).map((k) => [k, criteria[k]]));
     if (Object.keys(set).length) db.update(schema.searchCriteria).set({ ...set, updatedAt: new Date().toISOString() }).where(eq(schema.searchCriteria.id, 1)).run();
   }

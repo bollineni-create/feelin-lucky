@@ -3,23 +3,24 @@
 <h1 align="center">Lodestar</h1>
 
 <p align="center"><b>Your job hunt, steered.</b><br>
-A local app that tracks the search, and a daily Claude Code agent that finds jobs, prepares applications and submits the ones you approve, or, with auto-apply on, the strong matches on its own.</p>
+A job scanner and tracker. It reads your watchlist companies' job boards directly, has a daily Claude Code agent cover the rest (custom careers sites, LinkedIn, broad searches), scores every match and prepares the materials. It doesn't apply: the jobs you pick go to an apply queue that Claude or a Grok bot works through, and the results come back to the pipeline.</p>
 
-<p align="center"><a href="#run-it">Install</a> · <a href="agent/RUNBOOK.md">Agent runbook</a> · <a href="#safety-rails">Safety rails</a></p>
+<p align="center"><a href="#run-it">Install</a> · <a href="agent/RUNBOOK.md">Scanner runbook</a> · <a href="agent/APPLY.md">Apply agent rules</a> · <a href="#safety-rails">Safety rails</a></p>
 
 ## What it does
 
 - **A pipeline you can read at a glance.** The Pipeline board shows every application by stage, from found to offer, with a feed of what changed and a log of every agent run. While a run is on, the log says what the agent is doing right now (the application it's on and the step), and a run that stopped early, from Stop run, the time limit or a crash, can be finished with **Finish run**: the next run picks up the phase it was in and the item it was on.
 - **Every outcome has its place.** After Applied, the board has Screening, Interviewing and Offer, then Rejected, Didn't take (you turned it down or withdrew) and Closed (the posting came down). Rejection emails move a job to Rejected on their own; on a job's page, **Interviewing**, **Rejected** and **I didn't take it** move it in one click. The summary at the top counts what you're interviewing for and what closed out.
-- **Today's matches, ready to review.** Each morning the Queue holds the jobs the agent found and scored, each with a tailored resume or CV, a cover letter and answers to the screening questions. Approve one and it goes out on the next run, or right away with **Apply to approved now**; skip one and tell the agent why.
-- **A company watchlist.** 134 companies come seeded, by category and priority. The agent scans the ones that are due on their careers sites first, then runs the broad searches, including LinkedIn.
-- **Jobs at your own company go through the internal site.** Set **Where you work now** in Settings (it defaults to the current entry in your work history, and you can add the internal job site's link). Jobs at that company are earmarked **Apply internally**: the agent still finds, scores and prepares them, but never submits one. The Queue links to your internal site and has an **I applied internally** button that moves the job to Applied. When you change jobs, change the employer in Settings and the earmark follows.
+- **Job boards read straight from the source.** 57 watchlist companies post on Greenhouse, Lever, Ashby or Workday, and Lodestar reads their openings from the boards' own public feeds before every run, in about a minute, with no browser: every posting, its description and its pay where the board lists it. See [Job-board feeds](#job-board-feeds).
+- **Today's matches, ready to review.** Each morning the Queue holds the jobs that were found and scored, each with a tailored resume or CV, a cover letter and answers to the screening questions. **Send to apply queue** hands one to the apply agent; skip one and tell the agent why.
+- **An apply queue for Claude or a Grok bot.** Lodestar never applies. What you send to the apply queue is written to `data/handoff/APPLY-QUEUE.md` (and a folder of your choosing, like the Grok bridge in iCloud Drive) with the materials and a prompt to paste. The apply agent reports each result back, and the pipeline updates within two minutes. See [Applying: the apply queue](#applying-the-apply-queue).
+- **A company watchlist.** 134 companies come seeded, by category and priority. The agent scans the ones not on a readable board in Chrome, then runs the broad searches, including LinkedIn.
+- **Jobs at your own company go through the internal site.** Set **Where you work now** in Settings (it defaults to the current entry in your work history, and you can add the internal job site's link). Jobs at that company are earmarked **Apply internally**: they're still found, scored and prepared, but never go to the apply queue. The Queue links to your internal site and has an **I applied internally** button that moves the job to Applied. When you change jobs, change the employer in Settings and the earmark follows.
 - **Ask for something specific.** Heard about a role, or want one company checked now? On the Pipeline, under **Look for something on the next scan**, type a job title, a company, or both (with a link or a note if you have one). The next run searches for it before anything else, on the company's careers site and on LinkedIn, and reports back in one line. Whatever it finds is kept and prepared whatever the fit score, marked **You asked for this**, so you decide in the Queue. **Look again** sends a finished lookup back out.
-- **Fit scores, not noise.** Every job gets a fit score and reasons. Anything under the threshold (70, or 60 for high-priority companies) is closed on arrival and never scored again.
+- **Fit scores, not noise.** Every job gets a fit score and reasons from the agent, which reads the posting. Anything under the threshold (70, or 60 for high-priority companies) is closed on arrival and never scored again. When a scan brings in more than a run can score (a first board scan finds about a thousand), a quick triage puts the strongest first: your core functions, the right level, your cities, high-priority companies and fresh postings. The rest wait for the next run.
 - **Materials made for each job.** The agent writes Markdown from your own resume and CV text; the app renders it to PDF and Word in `data/applications/<job-id>/`.
-- **Auto-apply, if you want it.** Off by default. Switched on, the strong matches go out by themselves, within a daily cap, with a confirmation screenshot for each one. See [Auto-apply](#auto-apply).
 - **Tracking by email.** Lodestar reads Apple Mail on your Mac for what employers send back: the "we received your application" confirmation, rejections, interview requests, assessments. Each one lands on its application, so you don't have to sign in to every careers portal to see where things stand. Job emails are filed in a Lodestar mailbox and the ones that need a reply are flagged. See [Email tracking](#email-tracking-apple-mail). Applications with no response after 14 days get a "Follow up" next action.
-- **Your facts only.** Titles, dates and details come from the profile you confirm in Settings and nowhere else. Until it's confirmed, nothing is filled or submitted.
+- **Your facts only.** Titles, dates and details come from the profile you confirm in Settings and nowhere else. Until it's confirmed, the apply queue stays empty.
 - **A Mac app that keeps itself up to date.** Lodestar.app opens in its own window from the Dock, runs the agent every weekday at 7:00 AM and installs new versions from `main` on its own.
 
 ## Run it
@@ -50,18 +51,18 @@ Open **Settings** and:
 1. Replace every `[CONFIRM]` / `[TITLE TO USE]` placeholder in the work history (titles, exact dates, the June 2022 entry) and fill in contact details, education and work authorization.
 2. Paste the resume and CV text as Markdown. The agent tailors from this text.
 3. Set **Minimum base**.
-4. Tick **I've checked every title and date** and save. The server refuses to confirm while placeholders remain, and until the profile is confirmed the agent won't fill or submit any form.
+4. Tick **I've checked every title and date** and save. The server refuses to confirm while placeholders remain, and until the profile is confirmed the apply queue stays empty.
 
 ### Screens
 
 | Screen | Path | For |
 | --- | --- | --- |
 | Pipeline | `/` | Every application by stage, the update feed and the run log. **Run scan now** starts a run; **Finish run** picks up one that stopped early. **Look for something on the next scan** queues a job title or company for the agent. |
-| Today's matches | `/queue` | Approve or skip what the agent prepared. **Apply to approved now** sends the approved ones right away. |
-| Company watchlist | `/companies` | Companies by category, their careers sites and scan history, and the broad searches |
+| Today's matches | `/queue` | Send to the apply queue or skip what was prepared. **Copy prompt for Claude or Grok** hands the queue to the apply agent; **Check for results** picks up what it reported. |
+| Company watchlist | `/companies` | Companies by category (**feed** marks the ones read from their job board), careers sites and scan history, **Read job boards now**, and the broad searches |
 | Application | `/jobs/[id]` | One job: fit, materials, the posting, tracking, its emails and status history |
 | Mail | `/mail` | Email tracking: connect Apple Mail, the emails that need a look, and recent job emails |
-| Settings | `/settings` | Profile and search criteria, including auto-apply |
+| Settings | `/settings` | Profile and search criteria |
 
 ## The Mac app
 
@@ -78,24 +79,22 @@ Copies from earlier installs in `~/Applications` move to `/Applications` on thei
 
 ## The agent
 
-`scripts/daily-run.sh` starts a headless Claude Code session with Claude in Chrome. It follows [`agent/RUNBOOK.md`](agent/RUNBOOK.md) in your real Chrome, with your existing sign-ins, and records everything through the token-gated `/api/agent/*` routes. The app itself never browses.
+`scripts/daily-run.sh` first has the app read every job board it can (no browser), then starts a headless Claude Code session with Claude in Chrome for everything else. It follows [`agent/RUNBOOK.md`](agent/RUNBOOK.md) in your real Chrome, with your existing sign-ins, and records everything through the token-gated `/api/agent/*` routes. The app itself never browses.
 
 ```bash
-scripts/daily-run.sh --phase find,prepare   # first run: find + score + prepare, no submitting
-scripts/daily-run.sh --phase submit         # submit what you approved
-scripts/daily-run.sh                        # all phases: submit → find → prepare → track
+scripts/daily-run.sh --phase find,prepare   # find + score + prepare
+scripts/daily-run.sh                        # all phases: find → prepare → track
 ```
 
-A full run goes through four phases, in this order:
+A full run goes through three phases, in this order. The agent never applies to anything: it has no Apply, Easy Apply or Submit to press.
 
 | Phase | Does |
 | --- | --- |
-| **Submit** | Sends what you approved in the Queue, then what passes the auto-apply checks |
-| **Find** | Searches for what you asked for (lookups), then scans the watchlist companies that are due, then the broad and LinkedIn searches, and scores what it finds |
-| **Prepare** | Writes the resume or CV, cover letter and screening answers for each good match |
+| **Find** | The app reads the job boards first. Then the agent searches for what you asked for (lookups), scans the watchlist companies on custom careers sites that are due, then the broad and LinkedIn searches |
+| **Prepare** | Scores what was found (from the stored description when the feed had one) and writes the resume or CV, cover letter and screening answers for each good match |
 | **Track** | Reads Apple Mail for replies and settles the emails the app wasn't sure of, then re-checks postings, and portals only where email is silent |
 
-**What it needs.** Claude Code signed in with `/login` (Claude in Chrome is off for an API key or a `claude setup-token` token, so the script ignores `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`), and the Claude in Chrome extension installed and signed in. The script opens Chrome if it isn't running (set `JOBHUNT_CHROME_APP` in `.env` for another Chromium browser). The script checks `claude --help` for `--chrome`; if your version names it differently, set `CLAUDE_CHROME_FLAG` in `.env`. If the Chrome tools aren't named `mcp__claude-in-chrome__*` (check `/mcp` inside `claude --chrome`), set `CHROME_MCP_PREFIX`. For confirmation screenshots, give your terminal (and `/bin/bash` for launchd) Screen Recording permission; without it, the agent saves the confirmation text instead.
+**What it needs.** Claude Code signed in with `/login` (Claude in Chrome is off for an API key or a `claude setup-token` token, so the script ignores `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`), and the Claude in Chrome extension installed and signed in. The script opens Chrome if it isn't running (set `JOBHUNT_CHROME_APP` in `.env` for another Chromium browser). The script checks `claude --help` for `--chrome`; if your version names it differently, set `CLAUDE_CHROME_FLAG` in `.env`. If the Chrome tools aren't named `mcp__claude-in-chrome__*` (check `/mcp` inside `claude --chrome`), set `CHROME_MCP_PREFIX`. 
 
 **What it leaves behind.** Each run gets a row in the Pipeline's run log, a summary in `logs/run-*.log` (the agent's closing message, how many of each tool it called, and any tool calls that were refused) and a full transcript in `logs/run-*.jsonl`. The run log also shows what the app itself recorded (companies marked scanned, new jobs by source, and jobs closed as low fit), separate from the counts the agent reports, so you can tell a run that found nothing from one that found jobs and scored them all under the threshold. A run that included the find phase but scanned no company and posted no job is marked failed, so a run that didn't search can't show up as ok. Runs are capped at 120 minutes (`JOBHUNT_MAX_MINUTES`), and only one runs at a time. **Stop run** on the Pipeline ends the run in progress. A run whose process is gone (the app or Mac restarted under it) is marked failed the next time the app looks, instead of sitting at "running", and the next run takes over its lock.
 
@@ -124,20 +123,34 @@ scripts/install-launchd.sh           # app always on + daily run weekdays 7:00 A
 scripts/install-launchd.sh --remove
 ```
 
-**Run now** (Pipeline) and **Apply to approved now** (Queue, and the Pipeline when something is approved) start the same script from the app. Applying runs only the submit phase: it sends what you approved, and auto-apply matches if auto-apply is on, without scanning.
+**Run scan now** (Pipeline) starts the same script from the app.
 
-## Auto-apply
+## Job-board feeds
 
-Off by default. Turn it on under **Settings → Search criteria → Auto-apply** to let the agent submit applications by itself, on company careers sites and on LinkedIn (Easy Apply, or the company site LinkedIn links to). A job is auto-applied only when the server agrees that:
+Greenhouse, Lever, Ashby, SmartRecruiters and Workday each publish a company's open jobs as public JSON, the same data their careers pages are built from. Lodestar reads those feeds itself, before each run and whenever you press **Read job boards now** on the Companies page:
 
-- the profile is confirmed and the job's source is ticked;
-- the fit score is at least the auto-apply score (default 85) and the company's normal threshold;
-- the resume and cover letter are rendered, the portal isn't flagged for sign-in, and nothing says `[NEEDS YOU: …]`;
-- fewer than the daily cap (default 10) have gone out today.
+- **Which companies.** Every watchlist company (not paused) whose careers URL is one of those boards, plus the 57 whose boards are already known (`lib/known-boards.ts`, checked against each board's live feed): Stripe, Anthropic, Coinbase, Robinhood, SpaceX, Anduril, DoorDash, Jane Street, Point72, Bridgewater, OpenAI, Plaid, Ramp, Kalshi, Palantir, NVIDIA, Visa, Mastercard, PayPal, Morgan Stanley, Blackstone, BlackRock, Fidelity, Vanguard, State Street, S&P, Nasdaq, Coca-Cola and more. When the agent finds that a company's jobs live on one of these boards, it records the board's URL as the careers URL, and from the next run the app reads that company too.
+- **What's kept.** Postings whose title is one of your functions (the usual titles for each: "corporate development", "M&A", "FP&A", "treasury", "payments", "commercial banking", "business operations", "partnerships", "product manager", …; engineering, internships, sales and recruiting titles never are), in your primary or secondary cities or remote. High-priority (red) companies are kept anywhere in the US: the score weighs the location. Postings abroad are dropped. Each is recorded like an agent find (deduped, unscored) with its description, so the agent scores it without opening the page.
+- **What it saves.** A company read from its board is marked scanned, so the agent doesn't open its careers site; the agent's browser time goes to custom careers sites and LinkedIn. A board that doesn't answer is listed on the Companies page and left for the agent to scan in Chrome as usual.
+- **Workday** is searched rather than listed (big tenants have thousands of openings): one search per title keyword, and the full posting fetched only for matches.
 
-Those jobs show **Auto-applies next run** in the Queue, so you can still skip one before the run. Jobs prepared during a run are auto-applied in the same run. Every auto-application gets an "Auto-applied" event and a confirmation screenshot, like an approved one. The agent still never creates accounts, types passwords or solves CAPTCHAs (see [Job sites that want an account](#job-sites-that-want-an-account)).
+## Applying: the apply queue
 
-LinkedIn's user agreement restricts automated use of the site, and frequent automated Easy Apply can get an account restricted. The runbook keeps it slow (30 seconds or more between submissions, stop on any security check), but keep the daily cap low, or untick LinkedIn and auto-apply only on careers sites.
+Lodestar finds and prepares; it doesn't apply. On the Queue, **Send to apply queue** puts a job in the apply queue (stage **Apply queue** on the Pipeline). The queue is written out for whichever agent applies:
+
+| File | What's in it |
+| --- | --- |
+| `data/handoff/apply-queue.json` | Every queued job: its URL, portal, the rendered resume and cover letter paths, screening answers, plus your profile facts for the forms |
+| `data/handoff/APPLY-QUEUE.md` | The same as a readable list, with the prompt to paste at the top |
+| `data/handoff/apply-results.jsonl` | Where the apply agent appends one line per job it worked on |
+
+**Hand it off.** On the Queue, **Copy prompt for Claude or Grok** copies a prompt that points the agent at the list and at [`agent/APPLY.md`](agent/APPLY.md), the rules it follows: apply only to what's listed, fill forms from your profile only, never create accounts or type passwords, never guess a required answer, submit once. Paste it into a Claude chat with Claude in Chrome, Claude Code, or hand it to a Grok bot.
+
+**Results come back by themselves.** For each job the agent appends a line like `{"application_id": 42, "result": "applied", "confirmation": "...", "by": "grok"}` (`applied`, `needs_signin`, `needs_answers`, `posting_closed` or `failed`). The app reads the file every two minutes (or on **Check for results**): an applied job moves to Applied with a 14-day follow-up and Apple Mail tracking takes over; a sign-in wall or a question only you can answer shows on the Queue for you to fix, and the job goes back to the agent once you have. Each line is recorded once and archived. The agent can also report straight to the API on the same Mac (`agent/api.sh POST /api/agent/apply-queue`).
+
+**Mirror it to the Grok bridge.** Set `LODESTAR_HANDOFF_DIR` in `.env` to another folder (for example `~/Library/Mobile Documents/com~apple~CloudDocs/AI/grok-bridge/lodestar`) and the queue, a copy of each job's resume and cover letter under `materials/<application_id>/`, and the results file live there too. Results are read from both places.
+
+The rules the server enforces are the same whoever applies: only a job you put in the apply queue can be marked applied, never a job at your current employer, and nothing can put a job in the queue but you.
 
 ## Email tracking (Apple Mail)
 
@@ -172,28 +185,30 @@ The Lodestar mailbox is created inside each Mail account (not "On My Mac"), so i
 
 ## Job sites that want an account
 
-Workday, Oracle, Taleo, iCIMS and similar sites want an account before they take an application, and every company's Workday or Oracle site is a separate account. The Queue lists them under **job sites need an account**, one line per site, with the companies and how many approved jobs wait on it. For each one:
+Workday, Oracle, Taleo, iCIMS and similar sites want an account before they take an application, and every company's Workday or Oracle site is a separate account. When the apply agent hits one, it reports `needs_signin`, and the Queue lists the site under **job sites need an account**, one line per site, with the companies and how many queued jobs wait on it. For each one:
 
 1. **Open site** and create the account yourself. Use **Sign in with Google** or **LinkedIn** if the site offers it; otherwise use your email and let Chrome save the password.
-2. Press **I've signed in**. The next run tries every approved job on that site.
+2. Press **I've signed in**. Every queued job on that site goes back to the apply agent.
 
-On the run, the agent signs in with what Chrome fills in (or the Google or LinkedIn button) and never types or sees the password. Don't give passwords to the agent or put them in Lodestar: they would end up in its run logs. Meanwhile the scan favours LinkedIn Easy Apply and Greenhouse, Lever, Ashby and SmartRecruiters jobs, which go out without an account.
+The apply agent signs in with what Chrome fills in (or the Google or LinkedIn button) and never types or sees the password. Don't give passwords to any agent or put them in Lodestar.
 
 ## Safety rails
 
-Enforced in code as well as in the runbook.
+Enforced in code as well as in the runbooks.
 
+- Lodestar never applies. The scanning agent's runbook forbids opening an application form, its allowed tools have no screenshot or upload, and the server refuses `found → applied` from anyone.
 - `/api/agent/*` requires `Authorization: Bearer $AGENT_TOKEN`. The app binds to loopback only.
 - Only Lodestar itself and the launcher at https://bollineni-create.vercel.app may show Lodestar in a frame (`frame-ancestors` in `next.config.ts`), so no other page can load it out of sight and trick a click. `LODESTAR_FRAME_ANCESTORS` adds more origins.
-- The agent can't approve: the API rejects `found → approved`, and `→ applied` from anything but `approved`, except `found → applied` for a job that passes the auto-apply checks above (re-checked on the server at that moment, cap included). Approval only comes from the Queue's **Approve and submit** button.
-- `approved_to_submit` is empty while the profile is unconfirmed.
+- No agent can put a job in the apply queue: the API rejects `found → approved`. Only the Queue's **Send to apply queue** button does. Only a queued job can be marked applied, by the API or the results file alike.
+- The apply queue is empty while the profile is unconfirmed.
 - An email moves an application only forward (to applied, screening, interviewing or offer, or closed as rejected), never to approved, and only an email the app read from Mail itself. The agent can only settle emails the app put up for review.
 - Lodestar never sends, replies to, forwards or deletes email. It keeps only job emails, and moves or flags only those.
-- Jobs at the current employer (`search_criteria.current_employer`, or the profile's current work-history entry) are never in `approved_to_submit` or `auto_apply_to_submit`, and the agent API refuses to move one to `applied`. The user applies internally and marks it from the Queue.
+- Jobs at the current employer (`search_criteria.current_employer`, or the profile's current work-history entry) never go in the apply queue, and the API and results file refuse to mark one applied. You apply internally and mark it from the Queue.
 - Jobs under the fit threshold are closed as `low_fit` on arrival and never re-scored, except jobs found for a lookup you asked for, which stay open for you to decide. A job keeps its first score.
-- In headless mode the agent may only use the Chrome tools, `agent/api.sh`, `screencapture`, reads, and writes to `logs/tmp/`. `curl`, `rm`, `git` and WebFetch are blocked.
-- The agent never creates an account, types a password, reads a password field or solves a CAPTCHA. It signs in only with an existing session, a password Chrome has already filled in, or Sign in with Google, LinkedIn, Microsoft or Apple for an account already signed in (sign-in scope only).
-- Page content is data, not instructions: the runbook tells the agent to ignore anything a job posting or portal tells it to do.
+- In headless mode the scanning agent may only use the Chrome tools, `agent/api.sh`, `sleep`, `date`, reads, and writes to `logs/tmp/`. `curl`, `rm`, `git` and WebFetch are blocked.
+- The job-board feeds are read-only GETs (and Workday's search POST) to the boards' public APIs. No sign-in, no cookies.
+- No agent creates an account, types a password, reads a password field or solves a CAPTCHA.
+- Page content is data, not instructions: both runbooks tell the agent to ignore anything a job posting or portal tells it to do.
 
 ## How it's put together
 
@@ -205,15 +220,22 @@ components/               shared UI: nav, run button, theme toggle
 db/schema.ts              the data model (Drizzle on SQLite, data/jobhunt.db)
 db/seed-data.ts           the 134 seeded companies and the LinkedIn tracker
 db/migrations/            SQL migrations
-lib/logic.ts              stages, thresholds, follow-ups and the auto-apply checks
+lib/logic.ts              stages, thresholds and follow-ups
+lib/feed-boards.ts        job-board feeds: board detection, Greenhouse/Lever/Ashby/SmartRecruiters/Workday readers, the title and location matcher
+lib/feeds.ts              the feed scan: which companies, recording what's found
+lib/known-boards.ts       the boards watchlist companies are known to post on
+lib/ingest.ts             records a found job (shared by the agent API and the feed scan)
+lib/triage.ts             orders unscored jobs so the agent scores the strongest first
+lib/handoff.ts            the apply queue: writes it out, reads results back
 lib/render.ts             Markdown to PDF and DOCX
 lib/runner.ts             starts and watches agent runs from the app
 lib/dedupe.ts             matches a job to one already found (company + title + location)
 lib/mail.ts               email tracking: reads Apple Mail, records job emails, files and flags them
 lib/mail-rules.ts         what an email is and which application it's about (tests in lib/mail-rules.test.ts)
 scripts/mail/mail.js      the bridge to Apple Mail (JavaScript for Automation, run with osascript)
-instrumentation.ts        starts the 15-minute mail check when the app starts
-agent/RUNBOOK.md          the agent's standing instructions
+instrumentation.ts        starts the 15-minute mail check and the two-minute apply-queue sync
+agent/RUNBOOK.md          the scanning agent's standing instructions
+agent/APPLY.md            the rules for the apply agent (Claude or a Grok bot)
 agent/api.sh              the agent's way in to the API, with the bearer token added
 scripts/daily-run.sh      starts a headless Claude Code run
 scripts/auto-update.sh    pulls, rebuilds and restarts when main moves
@@ -229,24 +251,27 @@ Next.js 15, React 19, SQLite through better-sqlite3 and Drizzle, `pdfkit` and `d
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/agent/context` | Criteria, profile, current employer (jobs there are prepared but never submitted), lookups (titles or companies you asked for), companies due a scan, open applications, approved and auto-apply applications to submit, jobs needing a score or materials, skip feedback |
+| GET | `/api/agent/context` | Criteria, profile, current employer, lookups (titles or companies you asked for), companies due a scan (with `on_feed`), open applications, jobs needing a score (triaged, this run's share) or materials, skip feedback |
+| POST | `/api/agent/feeds/scan` | Read every job board now and record the matches |
+| GET | `/api/agent/jobs/:id` | One job with its stored description |
+| GET / POST | `/api/agent/apply-queue` | The apply queue (after reading any results); POST records results from the apply agent |
 | POST / PATCH | `/api/agent/runs`, `/api/agent/runs/:id` | Start a run; finish it with counts and errors |
 | POST | `/api/agent/jobs` | Upsert found jobs (dedupe on company + title + location) with fit score and reasons; `lookup_id` ties a job to a lookup and keeps it open whatever it scores |
 | PATCH | `/api/agent/lookups/:id` | Mark a lookup done, with one line on what was found |
 | POST | `/api/agent/jobs/:id/materials` | Resume/CV, cover letter and answers as Markdown; rendered to PDF and DOCX in `data/applications/<job-id>/` |
-| PATCH | `/api/agent/applications/:id` | Stage, `submitted_at`, `next_action`, `needs_signin`, `needs_answers`, … |
+| PATCH | `/api/agent/applications/:id` | Stage (forward only; `applied` only from the apply queue), `next_action`, `needs_signin`, `needs_answers`, … |
 | POST | `/api/agent/events` | Feed updates |
-| POST | `/api/agent/screenshots` | Confirmation screenshot (multipart or base64) and/or text |
+| POST | `/api/agent/screenshots` | Confirmation screenshot (multipart or base64) and/or text, for an apply agent on the Mac |
 | PATCH | `/api/agent/companies/:id` | `careers_url`, `ats_type`, `scanned` |
 | POST | `/api/agent/mail/sync` | Check Apple Mail now and record the job emails |
 | PATCH | `/api/agent/emails/:id` | Settle an email the app put up for review: application, kind, stage (forward only), or dismiss |
 
 ### Notes on the build
 
-- **Data model additions beyond spec §3:** `Job.company_name`, so LinkedIn jobs at companies outside the watchlist still have a name. `lookups` (a title and/or company you asked the agent to look for, with its result) and `Job.lookup_id`. `Company.categories` is a list (Valve and Salesforce sit in two categories). `Application` gains Markdown materials, `skip_reason`, `notes`, `linkedin_status` and `confirmation_text`. `Profile.confirmed` gates submission.
+- **Data model additions beyond spec §3:** `Job.company_name`, so LinkedIn jobs at companies outside the watchlist still have a name. `lookups` (a title and/or company you asked the agent to look for, with its result) and `Job.lookup_id`. `Company.categories` is a list (Valve and Salesforce sit in two categories). `Application` gains Markdown materials, `skip_reason`, `notes`, `linkedin_status` and `confirmation_text`. `Profile.confirmed` gates the apply queue. The auto-apply columns in `search_criteria` are left in place but no longer used.
 - Teal, blue and orange highlights are treated as normal priority until you give them a meaning.
 - Applied with no response for 14 days gets `next_action = "Follow up"` automatically.
 
 ## Your data
 
-Everything stays on your Mac: the database in `data/jobhunt.db` (with the job emails Lodestar keeps), rendered materials in `data/applications/`, your source documents in `data/source-docs/`, and logs in `logs/`. `data/`, `logs/`, `.env`, `my-profile.json` and PDFs in the folder are git-ignored. The only things that leave the machine are what the agent types into job sites in your Chrome, and what Claude Code sends to Anthropic to run the agent, which includes the job emails it settles for you (the ones under **Needs a look**).
+Everything stays on your Mac: the database in `data/jobhunt.db` (with the job emails Lodestar keeps), rendered materials in `data/applications/`, the apply queue in `data/handoff/` (and `LODESTAR_HANDOFF_DIR`, if set), your source documents in `data/source-docs/`, and logs in `logs/`. `data/`, `logs/`, `.env`, `my-profile.json` and PDFs in the folder are git-ignored. The only things that leave the machine are the job-board feed requests (public job listings, no sign-in), what the apply agent types into job sites, and what Claude Code sends to Anthropic to run the agent, which includes the job emails it settles for you (the ones under **Needs a look**).

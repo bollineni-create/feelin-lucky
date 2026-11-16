@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/lib/db";
 import { ApiError, agentRoute, intParam, parseBody } from "@/lib/agent-auth";
-import { FOLLOW_UP_DAYS, autoApplyCandidates, autoApplyBlocker, changeStage, clearSigninOnPortal, daysFromNow, getApplication, iso, logEvent } from "@/lib/logic";
+import { FOLLOW_UP_DAYS, changeStage, clearSigninOnPortal, daysFromNow, getApplication, iso, logEvent } from "@/lib/logic";
 import { normalizeClosedReason } from "@/lib/outcome";
 import { STAGES, type Application, type Stage } from "@/db/schema";
 
@@ -20,8 +20,8 @@ const Body = z.object({
   detail: z.string().optional(),
 });
 
-// The agent can move an application forward, but approval belongs to the user alone.
-// found → applied is allowed only for auto-apply candidates, checked below.
+// The agent can move an application forward, but approval belongs to the user alone. Only the apply agent (Claude or a
+// Grok bot working the apply queue, agent/APPLY.md) marks one applied, and only once the user sent it to the queue.
 const AGENT_TRANSITIONS: Record<Stage, Stage[]> = {
   found: ["closed"],
   approved: ["applied", "closed"],
@@ -51,17 +51,10 @@ export const PATCH = agentRoute(async (req, params) => {
   if (b.needs_answers === true && b.needs_signin === undefined) extra.needsSignin = false;
 
   if (b.stage && b.stage !== app.stage) {
-    let detail = b.detail ?? b.closed_reason ?? null;
+    const detail = b.detail ?? b.closed_reason ?? null;
     // Jobs at the user's current employer go through the internal job site; the agent never submits one.
     if (b.stage === "applied" && app.internal) throw new ApiError(403, "this job is at the user's current employer: they apply through the internal job site, the agent does not submit it");
-    const autoApply = app.stage === "found" && b.stage === "applied";
-    if (autoApply) {
-      const blocker = autoApplyBlocker(app);
-      if (blocker) throw new ApiError(403, `not eligible for auto-apply: ${blocker}`);
-      if (!autoApplyCandidates().some((a) => a.id === id)) throw new ApiError(403, "not eligible for auto-apply: today's auto-apply cap is reached");
-      extra.autoApplied = true;
-      detail = `Auto-applied (fit ${app.job.fitScore})${b.detail ? `: ${b.detail}` : ""}`;
-    } else if (!AGENT_TRANSITIONS[app.stage].includes(b.stage)) {
+    if (!AGENT_TRANSITIONS[app.stage].includes(b.stage)) {
       throw new ApiError(403, `agent may not move an application from "${app.stage}" to "${b.stage}"`);
     }
     if (b.stage === "applied") {

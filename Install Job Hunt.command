@@ -53,7 +53,7 @@ echo "Done. Next time, click Lodestar in the Dock or open it from your Applicati
 echo "It keeps itself up to date: no need to run this installer again."
 if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ] && [ ! -x "$HOME/.claude/local/claude" ]; then
   echo
-  echo "One thing left for the agent to search and apply: install Claude Code and sign in."
+  echo "One thing left for the agent to search: install Claude Code and sign in."
   echo "  curl -fsSL https://claude.ai/install.sh | bash   then run: claude"
   echo "Then add the Claude in Chrome extension to Chrome and connect it."
 fi

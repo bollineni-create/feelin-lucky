@@ -8,11 +8,19 @@ import { FOLLOW_UP_DAYS, changeStage, clearSigninOnPortal, daysFromNow, getAppli
 import { normalizeClosedReason } from "@/lib/outcome";
 import { renderMaterials } from "@/lib/render";
 import { startAgentRun, stopAgentRun } from "@/lib/runner";
+import { feedScanLine, scanFeeds } from "@/lib/feeds";
+import { syncHandoff } from "@/lib/handoff";
 import { checkMailBriefly, getMailSettings, reopenEmail, resolveEmail, updateMailSettings, type Resolution } from "@/lib/mail";
 import { ApiError } from "@/lib/agent-auth";
-import { HIGHLIGHTS, PRIORITIES, SOURCES, STAGES, type Highlight, type Priority, type Stage, type WorkEntry, type EducationEntry, type BroadSearch, type Source } from "@/db/schema";
+import { HIGHLIGHTS, PRIORITIES, STAGES, type Highlight, type Priority, type Stage, type WorkEntry, type EducationEntry, type BroadSearch } from "@/db/schema";
 
 const refresh = () => {
+  // Every change that can move a job in or out of the apply queue rewrites the queue file the apply agent reads.
+  try {
+    syncHandoff();
+  } catch (e) {
+    console.error("apply handoff:", e);
+  }
   revalidatePath("/", "layout");
 };
 
@@ -34,7 +42,7 @@ export async function approveApplication(appId: number) {
   if (!hasMaterials(app)) return;
   // Jobs at the current employer go through the internal job site, never the agent.
   if (app.internal) return;
-  changeStage(appId, "approved", { source: "you", detail: "Submitting on next run" });
+  changeStage(appId, "approved", { source: "you", detail: "Sent to the apply queue" });
   refresh();
 }
 
@@ -50,21 +58,21 @@ export async function markAppliedInternally(appId: number) {
   refresh();
 }
 
-/** The user signed in to the portal: every approved application on it goes to the agent again on the next run. */
+/** The user signed in to the portal: every queued application on it goes back to the apply agent. */
 export async function markSignedIn(appId: number) {
   const app = getApplication(appId);
   if (!app || !app.needsSignin) return;
   const n = clearSigninOnPortal(app);
-  logEvent({ applicationId: appId, type: "note", title: "You signed in to the portal", detail: n > 1 ? `${n} approved applications on it go out on the next run` : null, source: "you" });
+  logEvent({ applicationId: appId, type: "note", title: "You signed in to the portal", detail: n > 1 ? `${n} queued applications on it are back in the apply queue` : "Back in the apply queue", source: "you" });
   refresh();
 }
 
-/** The user added what the form asked for: the agent tries the application again on the next run. */
+/** The user added what the form asked for: the application goes back to the apply agent. */
 export async function markAnswered(appId: number) {
   const app = getApplication(appId);
   if (!app || !app.needsAnswers) return;
   db.update(schema.applications).set({ needsAnswers: false }).where(eq(schema.applications.id, appId)).run();
-  logEvent({ applicationId: appId, type: "note", title: "You added the form's answers", detail: "Goes out on the next run", source: "you" });
+  logEvent({ applicationId: appId, type: "note", title: "You added the form's answers", detail: "Back in the apply queue", source: "you" });
   refresh();
 }
 
@@ -108,12 +116,29 @@ export async function resumeRun() {
   return r;
 }
 
-export async function submitApprovedNow() {
-  // The agent fills and submits nothing until the profile is confirmed, so a run now would do nothing.
-  if (!getProfile().confirmed) return { ok: false as const, error: "Confirm your profile in Settings first; nothing is submitted until then." };
-  const r = await startAgentRun("submit", "submit-now");
-  refresh();
-  return r;
+/** Reads every watchlist company's job board now (Greenhouse, Lever, Ashby, SmartRecruiters, Workday), without Chrome. */
+export async function scanFeedsNow() {
+  try {
+    const summary = await scanFeeds();
+    refresh();
+    return { ok: true as const, message: feedScanLine(summary) };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Picks up what the apply agent reported and rewrites the apply queue file now. */
+export async function syncHandoffNow() {
+  try {
+    const r = syncHandoff();
+    revalidatePath("/", "layout");
+    const back = r.recorded ? `${r.recorded} result${r.recorded === 1 ? "" : "s"} recorded. ` : "";
+    const refused = r.refused.length ? ` ${r.refused.length} line${r.refused.length === 1 ? "" : "s"} refused: ${r.refused.slice(0, 2).join("; ")}` : "";
+    const err = r.errors.length ? ` Couldn't write ${r.errors.join("; ")}` : "";
+    return { ok: true as const, message: `${back}Queue file updated: ${r.count} to apply to${r.waiting ? `, ${r.waiting} waiting on you` : ""}.${refused}${err}` };
+  } catch (e) {
+    return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 // ---------- Application detail ----------
@@ -338,10 +363,6 @@ export async function saveCriteria(formData: FormData) {
       lookbackDays: num("lookback_days") ?? 7,
       broadSearches,
       notes: str(formData, "notes"),
-      autoApply: formData.get("auto_apply") === "on",
-      autoApplyMinScore: num("auto_apply_min_score") ?? 85,
-      autoApplyDailyCap: num("auto_apply_daily_cap") ?? 10,
-      autoApplySources: formData.getAll("auto_apply_sources").filter((v): v is Source => SOURCES.includes(v as Source)),
       currentEmployer: str(formData, "current_employer"),
       internalJobsUrl: str(formData, "internal_jobs_url"),
       updatedAt: iso(),

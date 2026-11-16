@@ -26,14 +26,15 @@ function launcherTail(lines = 4): string {
   }
 }
 
-export const PHASES = ["submit", "find", "prepare", "track"] as const;
+// Lodestar scans; it doesn't apply. Applying is handed off to Claude or a Grok bot (lib/handoff.ts, agent/APPLY.md).
+export const PHASES = ["find", "prepare", "track"] as const;
 
 /**
  * Starts scripts/daily-run.sh in the background, the same script launchd runs, and waits for it to create its
  * run record, so a script that stops before then (the app not answering, a lock held, no token) reports why
  * instead of leaving the button looking like it did nothing.
  */
-export async function startAgentRun(phase: string, trigger: "manual" | "submit-now" | "resume"): Promise<{ ok: true; runId: number } | { ok: false; error: string }> {
+export async function startAgentRun(phase: string, trigger: "manual" | "resume"): Promise<{ ok: true; runId: number } | { ok: false; error: string }> {
   const running = activeRun();
   if (running) return { ok: false, error: `Run #${running.id} is still in progress.` };
   if (process.platform !== "darwin" && !process.env.JOBHUNT_ALLOW_NON_MAC) {

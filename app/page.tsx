@@ -8,7 +8,7 @@ import { RunButton } from "@/components/RunButton";
 import { getMailSettings } from "@/lib/mail";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { closedOutcome, closedReasonLabel } from "@/lib/outcome";
-import { addLookup, redoLookup, removeLookup, resumeRun, runNow, stopRun, submitApprovedNow } from "./actions";
+import { addLookup, redoLookup, removeLookup, resumeRun, runNow, stopRun } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +16,7 @@ const COLUMN_CAP = 12;
 
 // Jobs closed as skipped or low fit were never pursued; those stay off the board.
 const COLUMNS: { name: string; match: (a: AppWithJob) => boolean }[] = [
-  { name: "Approved", match: (a) => a.stage === "approved" },
+  { name: "Apply queue", match: (a) => a.stage === "approved" },
   { name: "Applied", match: (a) => a.stage === "applied" },
   { name: "Screening", match: (a) => a.stage === "screening" },
   { name: "Interviewing", match: (a) => a.stage === "interviewing" },
@@ -38,12 +38,12 @@ function nextText(a: AppWithJob) {
   if (a.needsSignin) return "Sign in to the portal";
   if (a.needsAnswers) return "Answer the form's questions";
   if (a.nextAction) return a.nextActionDue ? `${a.nextAction} ${fmtDate(a.nextActionDue)}` : a.nextAction;
-  if (a.stage === "approved") return "Submitting on next run";
+  if (a.stage === "approved") return "In the apply queue";
   if (a.stage === "applied") return "Watch portal for a response";
   return null;
 }
 
-/** The find phase hasn't run yet: the run is still in a phase that comes before it (e.g. submit). */
+/** The find phase hasn't run yet: the run is still in a phase that comes before it (a resumed run, say). */
 function scanNotStarted(r: { status: string; phase: string; currentPhase: string | null }) {
   if (r.status !== "running" || !r.currentPhase) return false;
   const phases = r.phase.split(",").map((p) => p.trim());
@@ -114,7 +114,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   const rejected = all.filter((a) => closedOutcome(a) === "rejected").length;
   const declined = all.filter((a) => closedOutcome(a) === "declined").length;
   const kpis = [
-    { label: "Awaiting your approval", value: queue.length, sub: "Found in today’s scan", href: "/queue" },
+    { label: "Waiting for you", value: queue.length, sub: "Found in today’s scan", href: "/queue" },
     {
       label: "Applied",
       value: applied.length,
@@ -169,7 +169,9 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
                 />
               ) : null}
               {approved.length ? (
-                <RunButton action={submitApprovedNow} label={`Apply to ${approved.length} approved now`} pendingLabel="Starting…" doneMessage="Applying. Watch Chrome; the run log below updates as it goes." />
+                <Link className="btn" href="/queue">
+                  {approved.length} in the apply queue
+                </Link>
               ) : null}
               <RunButton action={runNow} label="Run scan now" pendingLabel="Starting…" doneMessage="Started. Watch Chrome; the run log below updates as it goes." />
             </>
@@ -378,14 +380,14 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
           <div className="panel-dark">
             <h2>How a daily run works</h2>
             <ol>
-              <li>Submits the applications you approved, and nothing else</li>
-              <li>Scans each watchlist company&apos;s careers page and your LinkedIn Jobs list</li>
+              <li>Reads every watchlist company&apos;s job board directly (Greenhouse, Lever, Ashby, SmartRecruiters, Workday), no browser needed</li>
+              <li>Scans the other companies&apos; careers pages, your LinkedIn Jobs list and the broad searches in Chrome</li>
               <li>Scores every new posting against your criteria and drops weak fits</li>
-              <li>Drafts a tailored resume and cover letter for each strong match, then waits for your approval</li>
+              <li>Drafts a tailored resume and cover letter for each strong match, then waits for you to send it to the apply queue</li>
               <li>Reads Apple Mail for confirmations, rejections and interview requests on everything in flight, and checks portals and LinkedIn where email is silent</li>
             </ol>
             <p className="fine" style={{ marginTop: 12 }}>
-              Nothing is submitted, no account is created and no password is entered without you.
+              Lodestar never applies. Jobs you send to the apply queue are applied to by Claude or a Grok bot working from the queue file, and their results come back here.
             </p>
             {mail.enabled ? null : (
               <p className="fine" style={{ marginTop: 8 }}>
