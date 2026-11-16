@@ -252,3 +252,43 @@ test("standing answers ride in the queue; an agent allowed to make accounts gets
   assert.equal(H.notifyGrok(new Date(t0.getTime() + 61 * 60_000)).sent, true, "announced again");
   D.db.update(D.schema.profile).set({ agentCreatesAccounts: false, standingAnswers: [] }).where(eq(D.schema.profile.id, 1)).run();
 });
+
+test("auto-queue sends every match at or above its score to the apply queue, and respects Undo", () => {
+  const add = (title: string, fitScore: number | null, materials = true, companyId = co["Plaid"], companyName = "Plaid") => {
+    const j = D.db.insert(D.schema.jobs).values({ companyId, companyName, source: "careers", title, fitScore, dedupeKey: `aq-${title}` }).returning().get();
+    return D.db.insert(D.schema.applications).values({ jobId: j.id, stage: "found", resumeMd: materials ? "r" : null, coverLetterMd: materials ? "c" : null }).returning().get().id;
+  };
+  const strong = add("AQ Strong", 88);
+  const edge = add("AQ Edge", 71);
+  const seventy = add("AQ Seventy", 70);
+  const bare = add("AQ No Materials", 92, false);
+  const unscored = add("AQ Unscored", null);
+  const inside = add("AQ Internal", 95, true, co["JPMorgan Chase"], "JPMorgan Chase");
+  const stage = (id: number) => L.getApplication(id)!.stage;
+
+  D.db.update(D.schema.searchCriteria).set({ autoApply: false, autoApplyMinScore: 71 }).where(eq(D.schema.searchCriteria.id, 1)).run();
+  assert.equal(H.autoQueue(), 0, "off: nothing moves");
+  assert.equal(stage(strong), "found");
+
+  D.db.update(D.schema.searchCriteria).set({ autoApply: true }).where(eq(D.schema.searchCriteria.id, 1)).run();
+  const r = H.syncHandoff();
+  assert.equal(r.auto_queued, 2);
+  assert.equal(stage(strong), "approved");
+  assert.equal(stage(edge), "approved", "71 is above 70");
+  assert.equal(stage(seventy), "found", "70 is not above 70");
+  assert.equal(stage(bare), "found", "waits for its résumé and cover letter");
+  assert.equal(stage(unscored), "found");
+  assert.equal(stage(inside), "found", "the current employer goes through the internal job site");
+  assert.ok(H.buildApplyQueue().items.some((i) => i.application_id === strong), "auto-queued jobs reach the apply agent");
+
+  // Materials land later: the next sync picks it up.
+  D.db.update(D.schema.applications).set({ resumeMd: "r", coverLetterMd: "c" }).where(eq(D.schema.applications.id, bare)).run();
+  assert.equal(H.autoQueue(), 1);
+  assert.equal(stage(bare), "approved");
+
+  // Pulled back with Undo: stays out.
+  L.changeStage(edge, "found", { source: "you", detail: "Undone" });
+  assert.equal(H.autoQueue(), 0);
+  assert.equal(stage(edge), "found");
+  D.db.update(D.schema.searchCriteria).set({ autoApply: false }).where(eq(D.schema.searchCriteria.id, 1)).run();
+});

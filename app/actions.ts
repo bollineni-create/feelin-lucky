@@ -395,6 +395,8 @@ export async function saveCriteria(formData: FormData) {
       notes: str(formData, "notes"),
       currentEmployer: str(formData, "current_employer"),
       internalJobsUrl: str(formData, "internal_jobs_url"),
+      autoApply: formData.get("auto_queue") === "on",
+      autoApplyMinScore: Math.min(100, Math.max(0, num("auto_queue_min_score") ?? 71)),
       updatedAt: iso(),
     })
     .where(eq(schema.searchCriteria.id, 1))

@@ -175,6 +175,15 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                   <input className="input mono" id="lookback_days" name="lookback_days" inputMode="numeric" defaultValue={c.lookbackDays} />
                 </div>
               </div>
+              <div className="row2">
+                <div className="field">
+                  <label htmlFor="auto_queue_min_score">Auto-queue at fit score</label>
+                  <input className="input mono" id="auto_queue_min_score" name="auto_queue_min_score" inputMode="numeric" defaultValue={c.autoApplyMinScore} />
+                </div>
+              </div>
+              <label className="check">
+                <input type="checkbox" name="auto_queue" defaultChecked={c.autoApply} /> Send every match at or above the auto-queue score straight to the apply queue once its résumé and cover letter are ready. Jobs at my current employer and jobs I pull back with Undo stay out.
+              </label>
               <div className="field">
                 <label htmlFor="broad_searches">Broad searches (label | what to search)</label>
                 <textarea className="input" id="broad_searches" name="broad_searches" rows={7} defaultValue={c.broadSearches.map((b) => `${b.label} | ${b.query}`).join("\n")} />

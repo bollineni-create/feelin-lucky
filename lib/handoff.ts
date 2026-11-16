@@ -14,7 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { DATA_DIR, ROOT, db, schema } from "./db";
 import { FOLLOW_UP_DAYS, bySubmitOrder, changeStage, clearSigninOnPortal, currentEmployer, daysFromNow, getApplication, getCriteria, getProfile, hasMaterials, iso, listApplications, logEvent, portalOf, type AppWithJob } from "./logic";
 import { portalHost, splitSigninWaits } from "./signin";
@@ -358,15 +358,43 @@ export function importApplyResults(): { recorded: number; refused: string[] } {
 }
 
 /** Reads results that came back, then rewrites the queue. Safe to call often. */
+/**
+ * Auto-queue: when it's on (Settings → Search), every found job scoring at least the auto-queue score, with its
+ * résumé and cover letter ready, goes straight to the apply queue, no Queue click needed. Jobs at the current
+ * employer never do (they go through the internal job site), and a job the user pulled back out of the queue with
+ * Undo stays out. Returns how many it queued.
+ */
+export function autoQueue(): number {
+  const c = getCriteria();
+  if (!c.autoApply) return 0;
+  const min = c.autoApplyMinScore;
+  const pulledBack = new Set(
+    db
+      .select({ id: schema.events.applicationId })
+      .from(schema.events)
+      .where(and(eq(schema.events.type, "status_change"), eq(schema.events.source, "you"), eq(schema.events.detail, "Undone")))
+      .all()
+      .map((e) => e.id),
+  );
+  let queued = 0;
+  for (const a of listApplications(eq(schema.applications.stage, "found"))) {
+    if (a.internal || !hasMaterials(a) || a.job.fitScore == null || a.job.fitScore < min || pulledBack.has(a.id)) continue;
+    changeStage(a.id, "approved", { source: "agent", detail: `Auto-queued: fit ${a.job.fitScore} (auto-queue at ${min}+)` });
+    queued++;
+  }
+  return queued;
+}
+
 export function syncHandoff() {
   const imported = importApplyResults();
+  const autoQueued = autoQueue();
   const written = writeHandoff();
   try {
     notifyGrok();
   } catch {
     // The bridge folder is offline (iCloud) or read-only; the next tick tries again.
   }
-  return { ...written, recorded: imported.recorded, refused: imported.refused };
+  return { ...written, recorded: imported.recorded, refused: imported.refused, auto_queued: autoQueued };
 }
 
 /**
