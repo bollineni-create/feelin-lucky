@@ -209,3 +209,38 @@ test("run activity separates the agent's own work from the feed scan's", () => {
   const feedJobs = D.db.select().from(D.schema.events).all().filter((e) => e.source === "feed").length;
   assert.equal(act.jobs_found - act.agent_jobs_found, feedJobs, "feed finds don't count as the agent's");
 });
+
+test("standing answers ride in the queue; an agent allowed to make accounts gets sign-in-walled jobs; Grok hears about new ones once", () => {
+  const cd = L.listApplications().find((a) => a.job.title === "Corporate Development Associate")!.id;
+  D.db.update(D.schema.applications).set({ needsAnswers: false, needsSignin: true, portalNote: "Workday account needed" }).where(eq(D.schema.applications.id, cd)).run();
+  D.db.update(D.schema.profile).set({ standingAnswers: [{ question: "How did you hear about us?", answer: "Company careers site" }], agentCreatesAccounts: false }).where(eq(D.schema.profile.id, 1)).run();
+
+  let q = H.buildApplyQueue();
+  assert.deepEqual(q.profile.standing_answers, [{ question: "How did you hear about us?", answer: "Company careers site" }]);
+  const walled = q.items.length === 0 ? q.waiting.find((w) => w.application_id === cd) : null;
+  // The first sign-in-walled job on a portal still gets one look; it only waits once the probe has failed. Either way
+  // it's not handed over as account-creatable.
+  assert.ok(walled || q.items.every((i) => i.application_id !== cd || i.needs_signin));
+
+  D.db.update(D.schema.profile).set({ agentCreatesAccounts: true }).where(eq(D.schema.profile.id, 1)).run();
+  q = H.buildApplyQueue();
+  assert.ok(q.items.some((i) => i.application_id === cd && i.needs_signin), "the agent may clear the wall itself");
+  assert.equal(q.profile.agent_may_create_accounts, true);
+  assert.ok(!q.waiting.some((w) => w.application_id === cd));
+
+  // The mirror's parent holds the bridge files, so Lodestar tells the Grok bots.
+  const bridge = path.dirname(MIRROR);
+  fs.writeFileSync(path.join(bridge, "TO-GROK.md"), "# to grok\n");
+  fs.writeFileSync(path.join(bridge, "INBOX.md"), "# inbox\n");
+  fs.writeFileSync(path.join(bridge, "PROTOCOL.md"), "# protocol\n");
+  H.writeHandoff();
+  const t0 = new Date("2026-11-16T10:00:00Z");
+  assert.deepEqual(H.notifyGrok(t0), { sent: true, fresh: q.items.length });
+  const toGrok = fs.readFileSync(path.join(bridge, "TO-GROK.md"), "utf8");
+  assert.match(toGrok, /^NOTE \[Claude\] T-20261116-LODESTAR: Lodestar apply queue: \d+ new jobs? ready/m);
+  assert.match(toGrok, /work lodestar\/APPLY-QUEUE\.md under T-20261116-LODESTAR; report each job in lodestar\/apply-results\.jsonl/);
+  assert.match(fs.readFileSync(path.join(bridge, "INBOX.md"), "utf8"), /NOTE \[Claude\] T-20261116-LODESTAR/);
+  assert.equal(H.notifyGrok(new Date(t0.getTime() + 5 * 60_000)).sent, false, "nothing new: no second line");
+  assert.equal(toGrok.split("NOTE [Claude]").length - 1, 1);
+  D.db.update(D.schema.profile).set({ agentCreatesAccounts: false, standingAnswers: [] }).where(eq(D.schema.profile.id, 1)).run();
+});

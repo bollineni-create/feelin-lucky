@@ -314,6 +314,8 @@ export async function saveProfile(formData: FormData) {
     redirect("/settings?error=json");
   }
   const confirmed = formData.get("confirmed") === "on";
+  const standingAnswers = parseStandingAnswers(str(formData, "standing_answers") ?? "");
+  const before = getProfile().standingAnswers;
   const hasPlaceholders = /\[(CONFIRM|TITLE)[^\]]*\]/i.test(JSON.stringify(workHistory));
   db.update(schema.profile)
     .set({
@@ -332,14 +334,42 @@ export async function saveProfile(formData: FormData) {
       cvFile: str(formData, "cv_file"),
       resumeText: str(formData, "resume_text"),
       cvText: str(formData, "cv_text"),
+      standingAnswers,
+      agentCreatesAccounts: formData.get("agent_creates_accounts") === "on",
       // Placeholders left in the work history keep the profile unconfirmed.
       confirmed: confirmed && !hasPlaceholders,
       updatedAt: iso(),
     })
     .where(eq(schema.profile.id, 1))
     .run();
+  // New or changed standing answers may be what a held form was missing: send those jobs back to the apply agent,
+  // which reports needs_answers again (naming the questions) if something is still missing.
+  if (JSON.stringify(before) !== JSON.stringify(standingAnswers)) {
+    const held = db
+      .select({ id: schema.applications.id })
+      .from(schema.applications)
+      .where(and(eq(schema.applications.stage, "approved"), eq(schema.applications.needsAnswers, true)))
+      .all();
+    for (const h of held) {
+      db.update(schema.applications).set({ needsAnswers: false }).where(eq(schema.applications.id, h.id)).run();
+      logEvent({ applicationId: h.id, type: "note", title: "Back in the apply queue", detail: "Standing answers updated in Settings", source: "user" });
+    }
+  }
   refresh();
   redirect(confirmed && hasPlaceholders ? "/settings?error=placeholders" : "/settings?saved=profile");
+}
+
+/** "Question => Answer", one per line (a line without "=>" continues the previous answer). */
+function parseStandingAnswers(text: string): { question: string; answer: string }[] {
+  const out: { question: string; answer: string }[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const at = line.indexOf("=>");
+    if (at > 0) out.push({ question: line.slice(0, at).trim(), answer: line.slice(at + 2).trim() });
+    else if (out.length) out[out.length - 1].answer += ` ${line}`;
+  }
+  return out.filter((a) => a.question && a.answer);
 }
 
 export async function saveCriteria(formData: FormData) {
