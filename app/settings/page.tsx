@@ -114,6 +114,20 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               <label htmlFor="cv_text">CV text (Markdown)</label>
               <textarea className="input code" id="cv_text" name="cv_text" rows={10} defaultValue={p.cvText ?? ""} />
             </div>
+            <div className="field">
+              <label htmlFor="standing_answers">Standing answers: the questions application forms keep asking (one per line, &quot;Question =&gt; Answer&quot;)</label>
+              <textarea
+                className="input code"
+                id="standing_answers"
+                name="standing_answers"
+                rows={14}
+                defaultValue={p.standingAnswers.map((a) => `${a.question} => ${a.answer}`).join("\n")}
+              />
+              <p className="muted small">The apply agent answers from these before it stops a job for you. Saving a change sends jobs held for answers back to the apply queue.</p>
+            </div>
+            <label className="check">
+              <input type="checkbox" name="agent_creates_accounts" defaultChecked={p.agentCreatesAccounts} /> The apply agent may create a careers-site account for me (my profile email, a new password kept in its password manager) when a portal requires one. Only Grok bots with a password manager do this; codes from my phone and CAPTCHAs still come to me.
+            </label>
             <label className="check">
               <input type="checkbox" name="confirmed" defaultChecked={p.confirmed} /> I&apos;ve checked every title and date above. The agent may use this profile on applications.
             </label>

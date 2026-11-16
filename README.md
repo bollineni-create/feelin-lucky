@@ -150,6 +150,10 @@ Lodestar finds and prepares; it doesn't apply. On the Queue, **Send to apply que
 
 **Mirror it to the Grok bridge.** Set `LODESTAR_HANDOFF_DIR` in `.env` to another folder (for example `~/Library/Mobile Documents/com~apple~CloudDocs/AI/grok-bridge/lodestar`) and the queue, a copy of each job's resume and cover letter under `materials/<application_id>/`, and the results file live there too. Results are read from both places.
 
+**The Grok bots hear about it.** When that folder sits inside the Grok bridge (its parent holds `TO-GROK.md` and `PROTOCOL.md`, or `LODESTAR_GROK_BRIDGE_DIR` points at the bridge), Lodestar appends one `NOTE [Claude] T-20261116-LODESTAR: …` line to `TO-GROK.md` and `INBOX.md` when new jobs are ready to apply to, at most once an hour. That wakes the Chairman, who hands it to the Job Postings bot under the standing task `T-20261116-LODESTAR`; the bot reports each job in `apply-results.jsonl`. `LODESTAR_GROK_NOTIFY=0` turns the notes off.
+
+**Standing answers and accounts.** Settings → Profile holds *standing answers*, "Question => Answer" lines for what forms keep asking (how you heard, clearance, export-control status, EEO, start date, salary, relocation). They ride in the queue, the apply agent uses them before it stops a job for you, and saving a change sends jobs held for answers back to the queue. Tick *the apply agent may create a careers-site account* and sign-in-walled jobs go to the agent too: a Grok bot with a password manager registers with your profile email and a unique password it keeps. Codes sent by text and CAPTCHAs still come to you.
+
 The rules the server enforces are the same whoever applies: only a job you put in the apply queue can be marked applied, never a job at your current employer, and nothing can put a job in the queue but you.
 
 ## Email tracking (Apple Mail)

@@ -108,7 +108,8 @@ export function buildApplyQueue(): ApplyQueue {
     else if (a.needsAnswers) waiting.push({ application_id: a.id, company: a.job.companyName, title: a.job.title, why: `the form needs answers from you: ${a.portalNote ?? "see the job page"}` });
     else ready.push(a);
   }
-  const split = splitSigninWaits(ready.sort(bySubmitOrder));
+  // An agent that may create careers-site accounts gets the sign-in-walled jobs too: the wall is its to clear.
+  const split = profile.agentCreatesAccounts ? { toSubmit: ready.sort(bySubmitOrder) } : splitSigninWaits(ready.sort(bySubmitOrder));
   for (const a of ready.filter((x) => !split.toSubmit.includes(x))) {
     waiting.push({ application_id: a.id, company: a.job.companyName, title: a.job.title, why: `${portalHost(a.job.url, a.job.companyName)} still wants a sign-in; press I've signed in on the Queue once you have` });
   }
@@ -131,6 +132,10 @@ export function buildApplyQueue(): ApplyQueue {
       skills: profile.skills,
       current_employer: employer,
       min_base: getCriteria().minBase,
+      // Answers to the questions forms keep asking; use them before reporting needs_answers.
+      standing_answers: profile.standingAnswers,
+      // True: you may create a careers-site account when a portal requires one (see APPLY.md rule 2).
+      agent_may_create_accounts: profile.agentCreatesAccounts,
     },
     // Nothing goes out until the user has confirmed every title and date in Settings.
     items: profile.confirmed ? split.toSubmit.map(toItem) : [],
@@ -143,8 +148,8 @@ export function applyPrompt(dir: string, count: number): string {
   return [
     `Apply to the ${count} job${count === 1 ? "" : "s"} in Lodestar's apply queue for me.`,
     `The list is ${path.join(dir, QUEUE_JSON)} (the same list, readable: ${path.join(dir, QUEUE_MD)}). The rules are ${path.join(ROOT, "agent", "APPLY.md")}: follow them exactly.`,
-    `Use my real Chrome and my existing sign-ins. Fill every form only from the profile in the queue and each job's answers, upload that job's resume and cover letter files, submit once, and screenshot the confirmation.`,
-    `Never create an account, type a password or solve a CAPTCHA, and never guess a required answer: stop on that job and report it.`,
+    `Use my browser and my existing sign-ins. Fill every form only from the profile in the queue (its standing_answers cover the questions forms keep asking) and each job's answers, upload that job's resume and cover letter files, submit once, and screenshot the confirmation.`,
+    `Accounts: follow APPLY.md rule 2 (an agent with its own password manager may create a careers-site account when the profile allows it). Never solve a CAPTCHA, enter a code from my phone, or guess a required answer: stop on that job and report it.`,
     `After each job, append one line to ${path.join(dir, RESULTS_FILE)}: {"application_id": N, "result": "applied" | "needs_signin" | "needs_answers" | "posting_closed" | "failed", "note": "<one line>", "confirmation": "<confirmation number or headline>", "by": "<claude or grok>"}.`,
   ].join("\n");
 }
@@ -154,9 +159,20 @@ function queueMarkdown(q: ApplyQueue, dir: string, materialsDir: string | null):
   out.push(`# Lodestar apply queue`, "", `Generated ${q.generated_at}. ${q.items.length} to apply to${q.waiting.length ? `, ${q.waiting.length} waiting on you` : ""}.`, "");
   if (!q.profile_confirmed) out.push("> **Nothing to apply to yet:** the profile isn't confirmed in Lodestar's Settings. Confirm every title and date there first.", "");
   out.push("## Prompt for Claude or a Grok bot", "", "```", applyPrompt(dir, q.items.length), "```", "");
+  const standing = (q.profile.standing_answers as { question: string; answer: string }[] | undefined) ?? [];
+  if (standing.length) {
+    out.push("## Standing answers (every form)", "");
+    for (const a of standing) out.push(`- **${a.question}** ${a.answer}`);
+    out.push("");
+  }
   q.items.forEach((it, i) => {
     out.push(`## ${i + 1}. ${it.title} · ${it.company}`, "");
-    out.push(`- Application ID: **${it.application_id}** · portal: ${it.portal}${it.needs_signin ? " · asked for a sign-in last time: one quick look, then report needs_signin if it still does" : ""}`);
+    const signin = !it.needs_signin
+      ? ""
+      : q.profile.agent_may_create_accounts
+        ? " · needs a careers-site account: sign in, or create one as APPLY.md rule 2 allows (profile email, a new password in your password manager)"
+        : " · asked for a sign-in last time: one quick look, then report needs_signin if it still does";
+    out.push(`- Application ID: **${it.application_id}** · portal: ${it.portal}${signin}`);
     out.push(`- Posting: ${it.url ?? "(no URL recorded)"}${it.location ? ` · ${it.location}` : ""}`);
     if (it.fit_score != null) out.push(`- Fit ${it.fit_score}: ${it.fit_reasons.join("; ")}`);
     const res = materialsDir ? path.join(materialsDir, String(it.application_id), path.basename(it.resume_file ?? "")) : it.resume_file;
@@ -345,8 +361,72 @@ export function importApplyResults(): { recorded: number; refused: string[] } {
 export function syncHandoff() {
   const imported = importApplyResults();
   const written = writeHandoff();
+  try {
+    notifyGrok();
+  } catch {
+    // The bridge folder is offline (iCloud) or read-only; the next tick tries again.
+  }
   return { ...written, recorded: imported.recorded, refused: imported.refused };
 }
+
+/**
+ * The Grok bridge folder, when the apply queue is mirrored into it: LODESTAR_GROK_BRIDGE_DIR, or the mirror folder's
+ * parent when that holds the bridge's TO-GROK.md and PROTOCOL.md.
+ */
+export function grokBridgeDir(): string | null {
+  const set = process.env.LODESTAR_GROK_BRIDGE_DIR?.trim();
+  if (set) return path.resolve(set.replace(/^~(?=$|\/)/, os.homedir()));
+  const m = mirrorDir();
+  if (!m) return null;
+  const parent = path.dirname(m);
+  return fs.existsSync(path.join(parent, "TO-GROK.md")) && fs.existsSync(path.join(parent, "PROTOCOL.md")) ? parent : null;
+}
+
+const NOTIFY_STATE = "grok-notified.json";
+const NOTIFY_EVERY_MS = 60 * 60_000;
+
+/**
+ * Tells the Grok bots when new jobs are ready to apply to: one line appended to the bridge's TO-GROK.md (which wakes
+ * the Chairman) and INBOX.md, in the bridge protocol's shape. At most once an hour, and only when the queue holds
+ * jobs it hasn't announced yet. LODESTAR_GROK_NOTIFY=0 turns it off.
+ */
+export function notifyGrok(now = new Date()): { sent: boolean; fresh: number } {
+  if (process.env.LODESTAR_GROK_NOTIFY === "0") return { sent: false, fresh: 0 };
+  const bridge = grokBridgeDir();
+  if (!bridge) return { sent: false, fresh: 0 };
+  const q = buildApplyQueue();
+  const statePath = path.join(HANDOFF_DIR, NOTIFY_STATE);
+  let state: { announced: number[]; at: string | null } = { announced: [], at: null };
+  try {
+    state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  } catch {
+    // First run.
+  }
+  // Only jobs still in the queue count as announced: one that left (held for answers or a sign-in) and came back is
+  // new to the Grok bots again.
+  const inQueue = new Set(q.items.map((i) => i.application_id));
+  const announced = new Set(state.announced.filter((id) => inQueue.has(id)));
+  const fresh = q.items.filter((i) => !announced.has(i.application_id));
+  const save = (at: string | null, ids: Iterable<number>) => {
+    fs.mkdirSync(HANDOFF_DIR, { recursive: true });
+    writeAtomic(statePath, JSON.stringify({ announced: [...ids], at }));
+  };
+  if (announced.size !== state.announced.length) save(state.at, announced);
+  if (!fresh.length) return { sent: false, fresh: 0 };
+  if (state.at && now.getTime() - new Date(state.at).getTime() < NOTIFY_EVERY_MS) return { sent: false, fresh: fresh.length };
+  const where = path.relative(bridge, path.join(mirrorDir() ?? HANDOFF_DIR, QUEUE_MD)) || QUEUE_MD;
+  const names = fresh.slice(0, 5).map((i) => `${i.company} (#${i.application_id})`).join(", ");
+  const line =
+    `NOTE [Claude] ${LODESTAR_TASK}: Lodestar apply queue: ${fresh.length} new job${fresh.length === 1 ? "" : "s"} ready (${q.items.length} in all) — ${names}${fresh.length > 5 ? ", …" : ""}. ` +
+    `Job Postings bot: work ${where} under ${LODESTAR_TASK}; report each job in ${path.basename(path.dirname(path.join(bridge, where)))}/${RESULTS_FILE}.\n`;
+  fs.appendFileSync(path.join(bridge, "TO-GROK.md"), `\n${line}`);
+  fs.appendFileSync(path.join(bridge, "INBOX.md"), `\n${line}`);
+  save(now.toISOString(), [...announced, ...fresh.map((i) => i.application_id)]);
+  return { sent: true, fresh: fresh.length };
+}
+
+/** The standing Grok task (TASKS.md in the bridge) that covers applying from the queue. */
+export const LODESTAR_TASK = "T-20261116-LODESTAR";
 
 const g = globalThis as unknown as { __lodestarHandoffTimer?: NodeJS.Timeout };
 
