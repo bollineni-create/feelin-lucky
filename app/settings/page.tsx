@@ -126,7 +126,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               <p className="muted small">The apply agent answers from these before it stops a job for you. Saving a change sends jobs held for answers back to the apply queue.</p>
             </div>
             <label className="check">
-              <input type="checkbox" name="agent_creates_accounts" defaultChecked={p.agentCreatesAccounts} /> The apply agent may create a careers-site account for me when a portal requires one, using Hide My Email and the browser&apos;s suggested strong password so the login saves to my Apple Passwords. Codes from my phone and CAPTCHAs still come to me.
+              <input type="checkbox" name="agent_creates_accounts" defaultChecked={p.agentCreatesAccounts} /> The apply agent may create a careers-site account for me when a portal requires one, in Safari with Hide My Email and Safari&apos;s suggested strong password, so the login saves to my Apple Passwords. Codes from my phone and CAPTCHAs still come to me.
             </label>
             <label className="check">
               <input type="checkbox" name="confirmed" defaultChecked={p.confirmed} /> I&apos;ve checked every title and date above. The agent may use this profile on applications.

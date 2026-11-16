@@ -149,7 +149,7 @@ export function applyPrompt(dir: string, count: number): string {
     `Apply to the ${count} job${count === 1 ? "" : "s"} in Lodestar's apply queue for me.`,
     `The list is ${path.join(dir, QUEUE_JSON)} (the same list, readable: ${path.join(dir, QUEUE_MD)}). The rules are ${path.join(ROOT, "agent", "APPLY.md")}: follow them exactly.`,
     `Use my browser and my existing sign-ins. Fill every form only from the profile in the queue (its standing_answers cover the questions forms keep asking) and each job's answers, upload that job's resume and cover letter files, submit once, and screenshot the confirmation.`,
-    `Accounts: follow APPLY.md rule 2 (try Apple Passwords autofill first; when the profile allows it, create a careers-site account with Hide My Email and the browser's suggested strong password). Never solve a CAPTCHA, enter a code from my phone, or guess a required answer: stop on that job and report it.`,
+    `Accounts: follow APPLY.md rule 2 (try Apple Passwords autofill first; when the profile allows it, create a careers-site account in Safari with Hide My Email and Safari's suggested strong password). Never solve a CAPTCHA, enter a code from my phone, or guess a required answer: stop on that job and report it.`,
     `After each job, append one line to ${path.join(dir, RESULTS_FILE)}: {"application_id": N, "result": "applied" | "needs_signin" | "needs_answers" | "posting_closed" | "failed", "note": "<one line>", "confirmation": "<confirmation number or headline>", "by": "<claude or grok>"}.`,
   ].join("\n");
 }
@@ -170,7 +170,7 @@ function queueMarkdown(q: ApplyQueue, dir: string, materialsDir: string | null):
     const signin = !it.needs_signin
       ? ""
       : q.profile.agent_may_create_accounts
-        ? " · needs a careers-site account: sign in, or create one as APPLY.md rule 2 allows (Hide My Email + the suggested strong password, saved to Apple Passwords)"
+        ? " · needs a careers-site account: sign in, or create one in Safari as APPLY.md rule 2 allows (Hide My Email + Safari's strong password, saved to Apple Passwords)"
         : " · asked for a sign-in last time: one quick look, then report needs_signin if it still does";
     out.push(`- Application ID: **${it.application_id}** · portal: ${it.portal}${signin}`);
     out.push(`- Posting: ${it.url ?? "(no URL recorded)"}${it.location ? ` · ${it.location}` : ""}`);
