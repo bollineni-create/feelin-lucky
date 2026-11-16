@@ -154,3 +154,27 @@ test("fetchBoard searches Workday by title keyword and reads details only for ma
   assert.equal(r.kept[0].postedAt, "2026-11-13");
   assert.equal(calls.filter((c) => c.startsWith("GET")).length, 2, "only the matches' details are fetched");
 });
+
+test("a rate-limited board is retried, not written off", async () => {
+  const { backoff, fetchBoard: fb, buildMatcher: bm } = await import("./feed-boards");
+  const waits: number[] = [];
+  const real = backoff.wait;
+  backoff.wait = async (ms) => void waits.push(ms);
+  let calls = 0;
+  const f = async () => {
+    calls++;
+    if (calls <= 2) return new Response("slow down", { status: 429, headers: calls === 2 ? { "retry-after": "3" } : {} });
+    return new Response(JSON.stringify({ jobs: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const r = await fb({ kind: "greenhouse", token: "x" }, bm(CRITERIA), f as never);
+    assert.equal(r.seen, 0);
+    assert.equal(calls, 3);
+    assert.deepEqual(waits, [2000, 3000]);
+    // Past the retries, it still fails cleanly.
+    calls = -10;
+    await assert.rejects(fb({ kind: "greenhouse", token: "x" }, bm(CRITERIA), (async () => new Response("", { status: 429 })) as never), /HTTP 429/);
+  } finally {
+    backoff.wait = real;
+  }
+});

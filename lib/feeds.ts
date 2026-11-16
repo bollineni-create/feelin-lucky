@@ -75,7 +75,9 @@ export function scanFeeds(opts: { companyIds?: number[]; fetcher?: Fetcher } = {
     const targets = feedCompanies().filter((t) => !opts.companyIds || opts.companyIds.includes(t.company.id));
     const results: FeedCompanyResult[] = [];
 
-    await inPool(targets, 4, async ({ company, board }) => {
+    // Workday rate-limits by address across all its tenants, so its boards go three at a time in their own lane;
+    // the listed boards (Greenhouse, Lever, Ashby, SmartRecruiters) keep four.
+    const scanOne = async ({ company, board }: (typeof targets)[number]) => {
       const r: FeedCompanyResult = { company_id: company.id, company: company.name, board: board.kind, seen: 0, matched: 0, created: 0, closed: 0 };
       try {
         // A high-priority (red) company is worth a look anywhere in the US: its jobs are kept on the function alone,
@@ -124,7 +126,11 @@ export function scanFeeds(opts: { companyIds?: number[]; fetcher?: Fetcher } = {
         r.error = e instanceof Error ? e.message : String(e);
       }
       results.push(r);
-    });
+    };
+    await Promise.all([
+      inPool(targets.filter((t) => t.board.kind !== "workday"), 4, scanOne),
+      inPool(targets.filter((t) => t.board.kind === "workday"), 3, scanOne),
+    ]);
 
     results.sort((a, b) => b.created - a.created || a.company.localeCompare(b.company));
     const summary: FeedScanSummary = {
