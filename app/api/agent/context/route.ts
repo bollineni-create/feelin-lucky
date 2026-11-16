@@ -132,6 +132,8 @@ export const GET = agentRoute(async (req) => {
       functions: criteria.functions,
       fit_threshold: criteria.fitThreshold,
       high_priority_threshold: criteria.highPriorityThreshold,
+      // When on, the app moves found jobs at or above this score into the apply queue as soon as materials exist.
+      auto_queue: criteria.autoApply ? { min_fit_score: criteria.autoApplyMinScore } : null,
       min_base: criteria.minBase,
       lookback_days: criteria.lookbackDays,
       broad_searches: criteria.broadSearches,

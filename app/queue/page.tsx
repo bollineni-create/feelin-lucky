@@ -41,7 +41,9 @@ export default function QueuePage() {
     criteria.functions.map((f, i) => (i ? f.toLowerCase() : f)).join(", "),
     `Minimum base: ${criteria.minBase ? `$${criteria.minBase.toLocaleString("en-US")}` : "[YOUR FLOOR]"}`,
     `Fit score of ${criteria.fitThreshold} or higher (${criteria.highPriorityThreshold} for red companies)`,
-    "Lodestar never applies: you send jobs to the apply queue, and Claude or a Grok bot applies",
+    criteria.autoApply
+      ? `Fit ${criteria.autoApplyMinScore}+ goes to the apply queue on its own once materials are ready; Claude or a Grok bot applies`
+      : "Lodestar never applies: you send jobs to the apply queue, and Claude or a Grok bot applies",
     employer ? `${employer} jobs: you apply through the internal job site` : null,
   ].filter((l): l is string => Boolean(l));
 
