@@ -307,8 +307,8 @@ export const profile = sqliteTable("profile", {
   // Answers to the questions application forms keep asking (how you heard, clearance, EEO, start date...). The apply
   // agent uses these before reporting a form as needing the user.
   standingAnswers: text("standing_answers", { mode: "json" }).$type<{ question: string; answer: string }[]>().notNull().default([]),
-  // The apply agent may create a careers-site account (profile email, a new password kept in its own password
-  // manager) instead of stopping at a sign-in wall. Only agents with a password manager (the Grok bots) do this.
+  // The apply agent may create a careers-site account (Hide My Email + the browser's suggested strong password, saved
+  // to Apple Passwords) instead of stopping at a sign-in wall.
   agentCreatesAccounts: integer("agent_creates_accounts", { mode: "boolean" }).notNull().default(false),
   // Until this is true the agent must not fill or submit any application form.
   confirmed: integer("confirmed", { mode: "boolean" }).notNull().default(false),
