@@ -214,3 +214,35 @@ test("httpsFetch posts a body and hands back status, headers and JSON", async ()
     void http;
   }
 });
+
+test("httpsFetch rejects on timeout even when the response stalls after its headers", async () => {
+  const net = await import("node:net");
+  const tls = await import("node:tls");
+  void net; void tls;
+  const { httpsFetch } = await import("./feed-boards");
+  const https = (await import("node:https")).default;
+  const real = https.request;
+  const { PassThrough } = await import("node:stream");
+  const { EventEmitter } = await import("node:events");
+  (https as unknown as { request: unknown }).request = ((_u: string, _o: unknown, cb: (res: unknown) => void) => {
+    const req = Object.assign(new EventEmitter(), {
+      end: () => {
+        const res = Object.assign(new PassThrough(), { statusCode: 200, headers: {}, complete: false });
+        cb(res);
+        res.write("{"); // headers and a first chunk, then nothing: no end, no error
+      },
+      destroy: () => {},
+    });
+    return req;
+  }) as never;
+  try {
+    const t = Date.now();
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 50); // a ref'd timer, like a request still waiting in a real scan
+    await assert.rejects(httpsFetch("https://stall.example/x", { signal: ctl.signal }), /timed out reading stall\.example/);
+    clearTimeout(timer);
+    assert.ok(Date.now() - t < 2000);
+  } finally {
+    (https as unknown as { request: unknown }).request = real;
+  }
+});
