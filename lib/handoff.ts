@@ -167,7 +167,12 @@ function queueMarkdown(q: ApplyQueue, dir: string, materialsDir: string | null):
   }
   q.items.forEach((it, i) => {
     out.push(`## ${i + 1}. ${it.title} · ${it.company}`, "");
-    out.push(`- Application ID: **${it.application_id}** · portal: ${it.portal}${it.needs_signin ? " · asked for a sign-in last time: one quick look, then report needs_signin if it still does" : ""}`);
+    const signin = !it.needs_signin
+      ? ""
+      : q.profile.agent_may_create_accounts
+        ? " · needs a careers-site account: sign in, or create one as APPLY.md rule 2 allows (profile email, a new password in your password manager)"
+        : " · asked for a sign-in last time: one quick look, then report needs_signin if it still does";
+    out.push(`- Application ID: **${it.application_id}** · portal: ${it.portal}${signin}`);
     out.push(`- Posting: ${it.url ?? "(no URL recorded)"}${it.location ? ` · ${it.location}` : ""}`);
     if (it.fit_score != null) out.push(`- Fit ${it.fit_score}: ${it.fit_reasons.join("; ")}`);
     const res = materialsDir ? path.join(materialsDir, String(it.application_id), path.basename(it.resume_file ?? "")) : it.resume_file;
@@ -397,8 +402,16 @@ export function notifyGrok(now = new Date()): { sent: boolean; fresh: number } {
   } catch {
     // First run.
   }
-  const announced = new Set(state.announced);
+  // Only jobs still in the queue count as announced: one that left (held for answers or a sign-in) and came back is
+  // new to the Grok bots again.
+  const inQueue = new Set(q.items.map((i) => i.application_id));
+  const announced = new Set(state.announced.filter((id) => inQueue.has(id)));
   const fresh = q.items.filter((i) => !announced.has(i.application_id));
+  const save = (at: string | null, ids: Iterable<number>) => {
+    fs.mkdirSync(HANDOFF_DIR, { recursive: true });
+    writeAtomic(statePath, JSON.stringify({ announced: [...ids], at }));
+  };
+  if (announced.size !== state.announced.length) save(state.at, announced);
   if (!fresh.length) return { sent: false, fresh: 0 };
   if (state.at && now.getTime() - new Date(state.at).getTime() < NOTIFY_EVERY_MS) return { sent: false, fresh: fresh.length };
   const where = path.relative(bridge, path.join(mirrorDir() ?? HANDOFF_DIR, QUEUE_MD)) || QUEUE_MD;
@@ -408,8 +421,7 @@ export function notifyGrok(now = new Date()): { sent: boolean; fresh: number } {
     `Job Postings bot: work ${where} under ${LODESTAR_TASK}; report each job in ${path.basename(path.dirname(path.join(bridge, where)))}/${RESULTS_FILE}.\n`;
   fs.appendFileSync(path.join(bridge, "TO-GROK.md"), `\n${line}`);
   fs.appendFileSync(path.join(bridge, "INBOX.md"), `\n${line}`);
-  fs.mkdirSync(HANDOFF_DIR, { recursive: true });
-  writeAtomic(statePath, JSON.stringify({ announced: [...announced, ...fresh.map((i) => i.application_id)], at: now.toISOString() }));
+  save(now.toISOString(), [...announced, ...fresh.map((i) => i.application_id)]);
   return { sent: true, fresh: fresh.length };
 }
 

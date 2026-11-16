@@ -242,5 +242,13 @@ test("standing answers ride in the queue; an agent allowed to make accounts gets
   assert.match(fs.readFileSync(path.join(bridge, "INBOX.md"), "utf8"), /NOTE \[Claude\] T-20261116-LODESTAR/);
   assert.equal(H.notifyGrok(new Date(t0.getTime() + 5 * 60_000)).sent, false, "nothing new: no second line");
   assert.equal(toGrok.split("NOTE [Claude]").length - 1, 1);
+  assert.match(fs.readFileSync(path.join(MIRROR, H.QUEUE_MD), "utf8"), /create one as APPLY\.md rule 2 allows/, "the row tells the agent it may make the account");
+
+  // A job that leaves the queue (held for answers) and comes back is announced again, after the hourly limit.
+  D.db.update(D.schema.applications).set({ needsAnswers: true }).where(eq(D.schema.applications.id, cd)).run();
+  assert.equal(H.notifyGrok(new Date(t0.getTime() + 10 * 60_000)).sent, false);
+  D.db.update(D.schema.applications).set({ needsAnswers: false }).where(eq(D.schema.applications.id, cd)).run();
+  assert.deepEqual(H.notifyGrok(new Date(t0.getTime() + 20 * 60_000)), { sent: false, fresh: 1 }, "back, but within the hour");
+  assert.equal(H.notifyGrok(new Date(t0.getTime() + 61 * 60_000)).sent, true, "announced again");
   D.db.update(D.schema.profile).set({ agentCreatesAccounts: false, standingAnswers: [] }).where(eq(D.schema.profile.id, 1)).run();
 });
