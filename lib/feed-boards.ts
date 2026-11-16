@@ -167,12 +167,24 @@ export async function inPool<T>(items: T[], size: number, work: (item: T) => Pro
 
 const UA = "Lodestar job scanner (personal job search; reads public job-board feeds)";
 
+/** Waits between retries of a rate-limited request; a test swaps it for an instant one. */
+export const backoff = { wait: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)) };
+const RETRY_MS = [2_000, 6_000, 15_000];
+
 async function getJson<T>(fetcher: Fetcher, url: string, init?: RequestInit): Promise<T> {
-  const res = await fetcher(url, {
-    ...init,
-    headers: { Accept: "application/json", "User-Agent": UA, ...(init?.headers ?? {}) },
-    signal: init?.signal ?? AbortSignal.timeout(25_000),
-  });
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetcher(url, {
+      ...init,
+      headers: { Accept: "application/json", "User-Agent": UA, ...(init?.headers ?? {}) },
+      signal: init?.signal ?? AbortSignal.timeout(25_000),
+    });
+    // Workday answers a burst from one address with 429 (sometimes 503). Back off and try again, honouring
+    // Retry-After when it's given, rather than writing the whole board off.
+    if ((res.status !== 429 && res.status !== 503) || attempt >= RETRY_MS.length) break;
+    const after = Number(res.headers.get("retry-after"));
+    await backoff.wait(Number.isFinite(after) && after > 0 ? Math.min(after * 1000, 30_000) : RETRY_MS[attempt]);
+  }
   if (res.status === 404) throw new Error(`board not found (404) at ${url}`);
   if (!res.ok) throw new Error(`HTTP ${res.status} from ${new URL(url).hostname}`);
   return (await res.json()) as T;
@@ -310,7 +322,7 @@ async function workday(
 ): Promise<{ seen: number; kept: FeedPosting[] }> {
   const api = `https://${b.host}/wday/cxs/${encodeURIComponent(b.tenant)}/${encodeURIComponent(b.site)}`;
   const seen = new Map<string, FeedPosting>();
-  await inPool(searches.length ? searches : [""], 3, async (q) => {
+  await inPool(searches.length ? searches : [""], 1, async (q) => {
     for (let offset = 0; offset < 40; offset += 20) {
       const data = await getJson<{ total?: number; jobPostings?: WorkdayListItem[] }>(fetcher, `${api}/jobs`, {
         method: "POST",
@@ -334,7 +346,7 @@ async function workday(
     }
   });
   const kept = [...seen.entries()].filter(([, p]) => keep(p));
-  await inPool(kept.slice(0, detailCap), 4, async ([path, p]) => {
+  await inPool(kept.slice(0, detailCap), 2, async ([path, p]) => {
     try {
       const d = await getJson<WorkdayDetail>(fetcher, `${api}${path}`);
       const info = d.jobPostingInfo;
