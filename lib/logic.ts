@@ -239,6 +239,16 @@ export function runUnfinished(run: Pick<RunRow, "status" | "currentPhase" | "err
 
 const RUN_PHASES = ["find", "prepare", "track"];
 
+/** Companies the latest job-board feed scan read successfully (data/feed-scan.json). */
+function lastFeedScanCompanies(): number[] {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(ROOT, "data", "feed-scan.json"), "utf8")) as { companies?: { company_id: number; error?: string }[] };
+    return (s.companies ?? []).filter((c) => !c.error).map((c) => c.company_id);
+  } catch {
+    return [];
+  }
+}
+
 /** The phases left when a run stopped in `currentPhase`: that phase and the ones after it, in run order. */
 export function resumePhases(run: Pick<RunRow, "phase" | "currentPhase">): string[] {
   const phases = run.phase.split(",").map((p) => p.trim()).filter(Boolean);
@@ -353,7 +363,31 @@ export function runActivity(run: Pick<typeof runs.$inferSelect, "startedAt" | "f
     .from(lookups)
     .where(and(eq(lookups.status, "done"), sql`${lookups.doneAt} >= ${from}`, sql`${lookups.doneAt} <= ${to}`))
     .get()!.n;
+  // What the agent itself did, apart from the job-board feed scan: companies the latest feed scan didn't read, and
+  // new jobs without the feed's "Found:" event (feed finds always get one). Sets, not counts, so a feed scan that
+  // overlapped the run's start can't make the agent's own work look like nothing.
+  const feedRead = new Set(lastFeedScanCompanies());
+  const scannedIds = db
+    .select({ id: companies.id })
+    .from(companies)
+    .where(and(sql`${companies.lastScannedAt} >= ${from}`, sql`${companies.lastScannedAt} <= ${to}`))
+    .all()
+    .map((c) => c.id);
+  const agentJobs = db
+    .select({ n: sql<number>`count(*)` })
+    .from(jobs)
+    .innerJoin(applications, eq(applications.jobId, jobs.id))
+    .where(
+      and(
+        sql`${jobs.firstSeenAt} >= ${from}`,
+        sql`${jobs.firstSeenAt} <= ${to}`,
+        sql`not exists (select 1 from ${events} where ${events.applicationId} = ${applications.id} and ${events.source} = 'feed')`,
+      ),
+    )
+    .get()!.n;
   return {
+    agent_companies_scanned: scannedIds.filter((id) => !feedRead.has(id)).length,
+    agent_jobs_found: agentJobs,
     companies_scanned: scanned,
     companies_unscanned: unscanned,
     lookups_done: lookupsDone,

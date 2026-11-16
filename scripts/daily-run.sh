@@ -100,18 +100,14 @@ trap 'on_signal "interrupted"' INT
 trap 'on_signal "hung up"' HUP
 
 # Job-board feeds, after the run record so "Run scan now" sees the run start right away. Ten minutes at most; the
-# agent scans in Chrome whatever didn't answer. What the feeds record is subtracted from the activity check below, so
-# a run whose agent searched nothing is still caught.
+# agent scans in Chrome whatever didn't answer. The activity check below counts only the agent's own work
+# (agent_companies_scanned, agent_jobs_found), so a run whose agent searched nothing is still caught.
 FEED_LINE=""
-FEED_COMPANIES=0
-FEED_NEW=0
 if [[ ",$PHASE," == *",find,"* ]]; then
   python3 -c 'import json; print(json.dumps({"phase":"find","note":"Reading job boards (Greenhouse, Lever, Ashby, SmartRecruiters, Workday)"}))' > "logs/tmp/feednote-$RUN_ID.json"
   agent/api.sh PATCH "/api/agent/runs/$RUN_ID" "logs/tmp/feednote-$RUN_ID.json" >/dev/null 2>>"$LOG" || true
   FEED_JSON="$(APP_CURL_MAX_TIME=600 agent/api.sh POST /api/agent/feeds/scan '{}' 2>>"$LOG")"
   FEED_LINE="$(echo "$FEED_JSON" | json_field "['line']")"
-  FEED_COMPANIES="$(echo "$FEED_JSON" | json_field "['summary']['companies_ok']")"; FEED_COMPANIES="${FEED_COMPANIES:-0}"
-  FEED_NEW="$(echo "$FEED_JSON" | json_field "['summary']['new_jobs']")"; FEED_NEW="${FEED_NEW:-0}"
   FEED_COUNTS="$(echo "$FEED_JSON" | python3 -c 'import json,sys; s=json.load(sys.stdin)["summary"]; print(json.dumps({"feed_companies_read": s["companies_ok"], "feed_postings_matched": s["matched"], "feed_new_jobs": s["new_jobs"]}))' 2>/dev/null || echo "{}")"
 fi
 if [ -n "$FEED_LINE" ]; then
@@ -375,12 +371,14 @@ STATUS="$(echo "$RUN_JSON" | json_field "['run']['status']")"
 SCANNED="$(echo "$RUN_JSON" | json_field "['activity']['companies_scanned']")"
 FOUND="$(echo "$RUN_JSON" | json_field "['activity']['jobs_found']")"
 LOOKUPS="$(echo "$RUN_JSON" | json_field "['activity']['lookups_done']")"
+AGENT_SCANNED="$(echo "$RUN_JSON" | json_field "['activity']['agent_companies_scanned']")"
+AGENT_FOUND="$(echo "$RUN_JSON" | json_field "['activity']['agent_jobs_found']")"
 log "Recorded by the app: ${SCANNED:-?} companies scanned, ${LOOKUPS:-?} lookups done, ${FOUND:-?} new jobs"
 if [ "$STATUS" = "running" ]; then
   KEPT="What it recorded before that (${SCANNED:-0} companies scanned, ${FOUND:-0} new jobs) is kept; the next run picks up the rest."
   if [ "$CODE" -eq 143 ]; then fail_run "Stopped at the ${MAX_MINUTES}-minute limit (JOBHUNT_MAX_MINUTES) before the agent finished. $KEPT"
   else fail_run "The agent exited (code $CODE) without closing the run. $KEPT See $LOG"; fi
-elif [[ ",$PHASE," == *",find,"* && "$STATUS" = "ok" && $(( ${SCANNED:-0} - FEED_COMPANIES )) -le 0 && $(( ${FOUND:-0} - FEED_NEW )) -le 0 && "${LOOKUPS:-0}" = "0" ]]; then
+elif [[ ",$PHASE," == *",find,"* && "$STATUS" = "ok" && "${AGENT_SCANNED:-0}" = "0" && "${AGENT_FOUND:-0}" = "0" && "${LOOKUPS:-0}" = "0" ]]; then
   # A find phase that marked no company scanned, settled no lookup and posted no job didn't search, whatever the agent reported.
   fail_run "The agent scanned no company, settled no lookup and posted no job (the job-board feeds' finds don't count): it didn't search. See $TRANSCRIPT"
 else

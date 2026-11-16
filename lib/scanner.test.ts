@@ -200,3 +200,12 @@ test("an old run stopped in the submit phase resumes with the phases that still 
   assert.deepEqual(L.resumePhases({ phase: "find,prepare,track", currentPhase: "prepare" }), ["prepare", "track"]);
   assert.deepEqual(L.resumePhases({ phase: "submit", currentPhase: "submit" }), ["find", "prepare", "track"]);
 });
+
+test("run activity separates the agent's own work from the feed scan's", () => {
+  const from = new Date(Date.now() - 3_600_000).toISOString();
+  const act = L.runActivity({ startedAt: from, finishedAt: new Date().toISOString() });
+  // Everything this file created came from the feeds (with "Found:" events) or was inserted without one.
+  assert.ok(act.jobs_found >= act.agent_jobs_found);
+  const feedJobs = D.db.select().from(D.schema.events).all().filter((e) => e.source === "feed").length;
+  assert.equal(act.jobs_found - act.agent_jobs_found, feedJobs, "feed finds don't count as the agent's");
+});
