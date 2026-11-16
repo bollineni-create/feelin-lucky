@@ -212,7 +212,21 @@ export function writeHandoff(): { dirs: string[]; count: number; waiting: number
     try {
       fs.mkdirSync(dir, { recursive: true });
       const materials = isMirror ? mirrorMaterials(dir, q.items) : null;
-      writeAtomic(path.join(dir, QUEUE_JSON), JSON.stringify(q, null, 2));
+      // In the mirror folder the file paths point at its own copies, so an agent that only sees that folder can upload them.
+      const local = (f: string | null, id: number) => (f && materials ? path.join(materials, String(id), path.basename(f)) : f);
+      const out = materials
+        ? {
+            ...q,
+            items: q.items.map((i) => ({
+              ...i,
+              resume_file: local(i.resume_file, i.application_id),
+              resume_docx: local(i.resume_docx, i.application_id),
+              cover_letter_file: local(i.cover_letter_file, i.application_id),
+              cover_letter_docx: local(i.cover_letter_docx, i.application_id),
+            })),
+          }
+        : q;
+      writeAtomic(path.join(dir, QUEUE_JSON), JSON.stringify(out, null, 2));
       writeAtomic(path.join(dir, QUEUE_MD), queueMarkdown(q, dir, materials));
       dirs.push(dir);
     } catch (e) {
@@ -262,7 +276,7 @@ export function recordApplyResult(r: ApplyResultLine): { ok: true; did: string }
     return { ok: true, did: "applied" };
   }
   if (r.result === "posting_closed") {
-    if (app.stage !== "approved" && app.stage !== "found") return { ok: false, error: `#${app.id} is "${app.stage}"` };
+    if (app.stage !== "approved") return { ok: false, error: `#${app.id} is "${app.stage}", not in the apply queue` };
     changeStage(app.id, "closed", { source: r.by ?? "apply-agent", detail: `Posting closed (${who})${note ? `: ${note}` : ""}`, extra: { closedReason: "posting_closed", nextAction: null, nextActionDue: null } });
     return { ok: true, did: "closed" };
   }

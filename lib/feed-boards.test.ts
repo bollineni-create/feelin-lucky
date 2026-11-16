@@ -134,20 +134,23 @@ test("fetchBoard searches Workday by title keyword and reads details only for ma
       const q = JSON.parse(String(init?.body)).searchText as string;
       if (q !== "treasury") return json({ total: 0, jobPostings: [] });
       return json({
-        total: 2,
+        total: 3,
         jobPostings: [
           { title: "Treasury Services Associate", externalPath: "/job/Seattle/Treasury-Services-Associate_R1", locationsText: "Seattle, WA", postedOn: "Posted 2 Days Ago", bulletFields: ["R1"] },
           { title: "Treasury Associate", externalPath: "/job/London/Treasury-Associate_R2", locationsText: "London, UK", postedOn: "Posted Today", bulletFields: ["R2"] },
+          { title: "Treasury Manager", externalPath: "/job/Multi/Treasury-Manager_R3", locationsText: "2 Locations", postedOn: "Posted Today", bulletFields: ["R3"] },
         ],
       });
     }
     if (url.endsWith("/wday/cxs/jpmc/External/job/Seattle/Treasury-Services-Associate_R1"))
       return json({ jobPostingInfo: { jobDescription: "<p>Cash management.</p>", startDate: "2026-11-13", jobReqId: "R1", externalUrl: "https://jpmc.wd5.myworkdayjobs.com/External/job/Seattle/Treasury-Services-Associate_R1" } });
+    if (url.endsWith("/wday/cxs/jpmc/External/job/Multi/Treasury-Manager_R3"))
+      return json({ jobPostingInfo: { jobDescription: "<p>EMEA cash.</p>", location: "London, UK", additionalLocations: ["Dublin, Ireland"], jobReqId: "R3" } });
     return json({}, 404);
   };
   const r = await fetchBoard({ kind: "workday", host: "jpmc.wd5.myworkdayjobs.com", tenant: "jpmc", site: "External" }, m, fetcher, new Date("2026-11-15T12:00:00Z"));
-  assert.equal(r.kept.length, 1);
+  assert.equal(r.kept.length, 1, "a '2 Locations' row whose details are all abroad is dropped");
   assert.equal(r.kept[0].description, "Cash management.");
   assert.equal(r.kept[0].postedAt, "2026-11-13");
-  assert.equal(calls.filter((c) => c.startsWith("GET")).length, 1, "only the match's details are fetched");
+  assert.equal(calls.filter((c) => c.startsWith("GET")).length, 2, "only the matches' details are fetched");
 });

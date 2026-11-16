@@ -69,6 +69,8 @@ test("the feed scan records matching postings and marks those companies scanned"
   assert.equal(tm.job.description, "Own global cash.");
   assert.equal(tm.job.source, "careers");
   assert.equal(tm.job.fitScore, null, "the agent scores it in the prepare phase");
+  const ev = D.db.select().from(D.schema.events).where(eq(D.schema.events.applicationId, tm.id)).all();
+  assert.ok(ev.some((e) => e.title === "Found: Treasury Manager" && e.detail?.includes("Greenhouse feed")), "feed finds show on the Pipeline feed");
 
   assert.ok(company("Stripe").lastScannedAt, "read from its board → off the agent's companies_due");
   assert.equal(company("Stripe").atsType, "greenhouse");
@@ -122,6 +124,10 @@ test("jobs sent to the apply queue are written out for the apply agent, with cop
     assert.doesNotMatch(md, /Treasury VP/);
   }
   assert.ok(fs.existsSync(path.join(MIRROR, "materials", String(tm), `resume-${tm}.pdf`)), "the mirror folder gets its own copies");
+  const mq = JSON.parse(fs.readFileSync(path.join(MIRROR, H.QUEUE_JSON), "utf8")) as import("./handoff").ApplyQueue;
+  assert.equal(mq.items[0].resume_file, path.join(MIRROR, "materials", String(tm), `resume-${tm}.pdf`), "the mirror's queue points at its own copies");
+  const lq = JSON.parse(fs.readFileSync(path.join(LOCAL, H.QUEUE_JSON), "utf8")) as import("./handoff").ApplyQueue;
+  assert.equal(lq.items[0].resume_file, path.join(dir, `resume-${tm}.pdf`));
   assert.ok(!fs.existsSync(path.join(MIRROR, "materials", String(cd))), "only queued jobs");
 });
 
@@ -147,6 +153,7 @@ test("results the apply agent writes back are recorded once, under the agent API
   assert.equal(applied.confirmationText, "Thanks for applying!");
   assert.equal(applied.nextAction, "Follow up");
   assert.equal(L.getApplication(cd)!.stage, "found");
+  assert.deepEqual(H.recordApplyResult({ application_id: cd, result: "posting_closed" }), { ok: false, error: `#${cd} is "found", not in the apply queue` }, "a job you never queued can't be closed from the results file");
 
   assert.ok(!fs.existsSync(path.join(MIRROR, H.RESULTS_FILE)), "read lines move to the archive");
   assert.equal(fs.readFileSync(path.join(MIRROR, "apply-results.archive.jsonl"), "utf8").trim().split("\n").length, 3);

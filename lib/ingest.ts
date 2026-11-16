@@ -119,6 +119,9 @@ export function ingestJob(j: JobInput, opts: { via?: string } = {}): IngestResul
     logEvent({ applicationId: app.id, type: "note", title: `Found for your lookup: ${job.title}`, detail: `${job.fitScore != null ? `Fit ${job.fitScore} · ` : ""}${opts.via ?? (job.source === "linkedin" ? "LinkedIn" : "Careers site")}` });
   } else if (status === "created" && job.fitScore != null) {
     logEvent({ applicationId: app.id, type: "note", title: `New match: ${job.title}`, detail: `Fit ${job.fitScore} · ${opts.via ?? (job.source === "linkedin" ? "LinkedIn" : "Careers site")}` });
+  } else if (status === "created" && opts.via) {
+    // Feed finds arrive unscored; record the find so it shows on the Pipeline feed. The score comes later.
+    logEvent({ applicationId: app.id, type: "note", title: `Found: ${job.title}`, detail: `${opts.via} · waiting for a score`, source: "feed" });
   }
 
 

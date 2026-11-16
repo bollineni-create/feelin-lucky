@@ -346,7 +346,8 @@ async function workday(
       // A detail that won't load still leaves the posting; the agent reads it when it scores.
     }
   });
-  return { seen: seen.size, kept: kept.map(([, p]) => p) };
+  // The list row can say "3 Locations"; the detail gives the real cities, which may all be abroad. Check again.
+  return { seen: seen.size, kept: kept.map(([, p]) => p).filter((p) => keep(p)) };
 }
 
 /** Every open posting on a board that the matcher keeps. */
