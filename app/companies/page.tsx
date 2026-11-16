@@ -5,7 +5,9 @@ import { getCriteria } from "@/lib/logic";
 import { CATEGORIES } from "@/db/seed-data";
 import { ago } from "@/lib/format";
 import { Hl } from "@/components/Hl";
-import { addCompany } from "../actions";
+import { RunButton } from "@/components/RunButton";
+import { feedScanLine, lastFeedScan, onFeed } from "@/lib/feeds";
+import { addCompany, scanFeedsNow } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +18,8 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
   const categories = [...new Set([...CATEGORIES, ...all.flatMap((c) => c.categories)])];
   const active = sp.category && categories.includes(sp.category) ? sp.category : null;
   const criteria = getCriteria();
+  const feedCount = all.filter((c) => c.priority !== "paused" && onFeed(c)).length;
+  const lastScan = lastFeedScan();
 
   const href = (p: { category?: string | null; highlighted?: boolean }) => {
     const u = new URLSearchParams();
@@ -66,6 +70,27 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
         </div>
       </div>
 
+      <div className="panel" aria-label="Job-board feeds">
+        <h2 style={{ marginBottom: 6 }}>Job-board feeds</h2>
+        <p className="secondary" style={{ marginBottom: 10 }}>
+          <span className="num">{feedCount}</span> of these companies post on Greenhouse, Lever, Ashby, SmartRecruiters or Workday, so Lodestar reads their openings
+          straight from the board on every run, no Chrome needed (marked <span className="ats">feed</span>). Set a company&apos;s careers URL to its board to add it.
+          {lastScan ? (
+            <>
+              {" "}
+              Last read {ago(lastScan.finished_at)}: {feedScanLine(lastScan)}.
+            </>
+          ) : null}
+        </p>
+        {lastScan?.errors.length ? (
+          <p className="small muted" style={{ marginBottom: 10 }}>
+            Didn&apos;t answer: {lastScan.errors.slice(0, 5).join(" · ")}
+            {lastScan.errors.length > 5 ? ` · and ${lastScan.errors.length - 5} more` : ""}
+          </p>
+        ) : null}
+        <RunButton action={scanFeedsNow} label="Read job boards now" pendingLabel="Reading boards…" doneMessage="Done." />
+      </div>
+
       <div className="filters" role="group" aria-label="Filter categories">
         <Link className="fbtn" href={href({ category: null })} aria-pressed={!active}>
           All
@@ -98,6 +123,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
                     <Hl color={c.highlight} />
                     <span>{c.name}</span>
                     {c.atsType ? <span className="ats">{c.atsType}</span> : null}
+                    {c.priority !== "paused" && onFeed(c) ? <span className="ats" title="Read straight from its job board on every run">feed</span> : null}
                     {c.scanNote ? (
                       <span className="ats status-failed" aria-label="Couldn't scan">
                         !

@@ -1,0 +1,367 @@
+// The apply handoff. Lodestar finds, scores and prepares jobs; it doesn't apply. Jobs you send to the apply queue
+// (the Queue's "Send to apply queue") are written out as a work list for whichever agent applies: a Claude chat,
+// Claude Code, or a Grok bot on the Mac. The agent reports each result back by appending one JSON line to
+// apply-results.jsonl next to the list (or with agent/api.sh), and Lodestar records it on the application.
+//
+//   data/handoff/apply-queue.json   what to apply to, with the profile facts and the materials' file paths
+//   data/handoff/APPLY-QUEUE.md     the same as a readable list, with a prompt to paste into the agent
+//   data/handoff/apply-results.jsonl  the agent appends one line per job it worked on
+//
+// With LODESTAR_HANDOFF_DIR set (e.g. a folder in iCloud Drive the Grok bridge reads), the same files go there
+// too, with copies of each job's resume and cover letter, and results are read from there as well.
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { z } from "zod";
+import { eq } from "drizzle-orm";
+import { DATA_DIR, ROOT, db, schema } from "./db";
+import { FOLLOW_UP_DAYS, bySubmitOrder, changeStage, clearSigninOnPortal, currentEmployer, daysFromNow, getApplication, getCriteria, getProfile, hasMaterials, iso, listApplications, logEvent, portalOf, type AppWithJob } from "./logic";
+import { portalHost, splitSigninWaits } from "./signin";
+
+const { applications } = schema;
+
+// LODESTAR_HANDOFF_LOCAL_DIR moves it (the tests use a scratch folder).
+export const HANDOFF_DIR = process.env.LODESTAR_HANDOFF_LOCAL_DIR ?? path.join(DATA_DIR, "handoff");
+export const QUEUE_JSON = "apply-queue.json";
+export const QUEUE_MD = "APPLY-QUEUE.md";
+export const RESULTS_FILE = "apply-results.jsonl";
+const ARCHIVE_FILE = "apply-results.archive.jsonl";
+
+/** The extra folder the handoff is mirrored to (LODESTAR_HANDOFF_DIR), with ~ expanded. */
+export function mirrorDir(): string | null {
+  const v = process.env.LODESTAR_HANDOFF_DIR?.trim();
+  if (!v) return null;
+  return path.resolve(v.replace(/^~(?=$|\/)/, os.homedir()));
+}
+
+export type ApplyItem = {
+  application_id: number;
+  job_id: number;
+  company: string;
+  title: string;
+  location: string | null;
+  url: string | null;
+  source: string;
+  portal: string;
+  fit_score: number | null;
+  fit_reasons: string[];
+  sent_to_queue_at: string;
+  resume_version: string | null;
+  resume_file: string | null;
+  resume_docx: string | null;
+  cover_letter_file: string | null;
+  cover_letter_docx: string | null;
+  answers: { question: string; answer: string }[];
+  needs_signin: boolean;
+  portal_note: string | null;
+};
+
+export type ApplyQueue = {
+  generated_at: string;
+  how_to_report: string;
+  profile_confirmed: boolean;
+  profile: Record<string, unknown>;
+  items: ApplyItem[];
+  /** Sent to the queue, but waiting on something only the user can do. Not for the agent. */
+  waiting: { application_id: number; company: string; title: string; why: string }[];
+};
+
+const docx = (p: string | null) => p?.replace(/\.pdf$/, ".docx") ?? null;
+
+function toItem(a: AppWithJob): ApplyItem {
+  return {
+    application_id: a.id,
+    job_id: a.jobId,
+    company: a.job.companyName,
+    title: a.job.title,
+    location: a.job.location,
+    url: a.job.url,
+    source: a.job.source,
+    portal: portalOf(a),
+    fit_score: a.job.fitScore,
+    fit_reasons: a.job.fitReasons ?? [],
+    sent_to_queue_at: a.stageChangedAt,
+    resume_version: a.resumeVersion,
+    resume_file: a.resumePath,
+    resume_docx: docx(a.resumePath),
+    cover_letter_file: a.coverLetterPath,
+    cover_letter_docx: docx(a.coverLetterPath),
+    answers: a.answers ?? [],
+    needs_signin: a.needsSignin,
+    portal_note: a.portalNote,
+  };
+}
+
+/**
+ * What the apply agent works on: applications the user sent to the apply queue (stage "approved") with materials
+ * ready, quick boards first. Jobs at the current employer never go in (the user applies internally); forms waiting
+ * on the user's answers, and portals still waiting on a sign-in, are listed under `waiting` instead.
+ */
+export function buildApplyQueue(): ApplyQueue {
+  const profile = getProfile();
+  const approved = listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal);
+  const waiting: ApplyQueue["waiting"] = [];
+  const ready: AppWithJob[] = [];
+  for (const a of approved) {
+    if (!hasMaterials(a)) waiting.push({ application_id: a.id, company: a.job.companyName, title: a.job.title, why: "materials aren't ready" });
+    else if (a.needsAnswers) waiting.push({ application_id: a.id, company: a.job.companyName, title: a.job.title, why: `the form needs answers from you: ${a.portalNote ?? "see the job page"}` });
+    else ready.push(a);
+  }
+  const split = splitSigninWaits(ready.sort(bySubmitOrder));
+  for (const a of ready.filter((x) => !split.toSubmit.includes(x))) {
+    waiting.push({ application_id: a.id, company: a.job.companyName, title: a.job.title, why: `${portalHost(a.job.url, a.job.companyName)} still wants a sign-in; press I've signed in on the Queue once you have` });
+  }
+  const employer = currentEmployer();
+  return {
+    generated_at: iso(),
+    how_to_report: `Append one JSON line per job to ${RESULTS_FILE} in this folder: {"application_id": N, "result": "applied" | "needs_signin" | "needs_answers" | "posting_closed" | "failed", "note": "...", "confirmation": "...", "by": "claude" | "grok"}`,
+    profile_confirmed: profile.confirmed,
+    profile: {
+      full_name: profile.fullName,
+      email: profile.email,
+      phone: profile.phone,
+      location: profile.location,
+      linkedin_url: profile.linkedinUrl,
+      website_url: profile.websiteUrl,
+      work_authorization: profile.workAuthorization,
+      needs_sponsorship: profile.needsSponsorship,
+      work_history: profile.workHistory,
+      education: profile.education,
+      skills: profile.skills,
+      current_employer: employer,
+      min_base: getCriteria().minBase,
+    },
+    // Nothing goes out until the user has confirmed every title and date in Settings.
+    items: profile.confirmed ? split.toSubmit.map(toItem) : [],
+    waiting,
+  };
+}
+
+/** The prompt to paste into a Claude chat or a Grok bot, pointing it at the queue and the rules. */
+export function applyPrompt(dir: string, count: number): string {
+  return [
+    `Apply to the ${count} job${count === 1 ? "" : "s"} in Lodestar's apply queue for me.`,
+    `The list is ${path.join(dir, QUEUE_JSON)} (the same list, readable: ${path.join(dir, QUEUE_MD)}). The rules are ${path.join(ROOT, "agent", "APPLY.md")}: follow them exactly.`,
+    `Use my real Chrome and my existing sign-ins. Fill every form only from the profile in the queue and each job's answers, upload that job's resume and cover letter files, submit once, and screenshot the confirmation.`,
+    `Never create an account, type a password or solve a CAPTCHA, and never guess a required answer: stop on that job and report it.`,
+    `After each job, append one line to ${path.join(dir, RESULTS_FILE)}: {"application_id": N, "result": "applied" | "needs_signin" | "needs_answers" | "posting_closed" | "failed", "note": "<one line>", "confirmation": "<confirmation number or headline>", "by": "<claude or grok>"}.`,
+  ].join("\n");
+}
+
+function queueMarkdown(q: ApplyQueue, dir: string, materialsDir: string | null): string {
+  const out: string[] = [];
+  out.push(`# Lodestar apply queue`, "", `Generated ${q.generated_at}. ${q.items.length} to apply to${q.waiting.length ? `, ${q.waiting.length} waiting on you` : ""}.`, "");
+  if (!q.profile_confirmed) out.push("> **Nothing to apply to yet:** the profile isn't confirmed in Lodestar's Settings. Confirm every title and date there first.", "");
+  out.push("## Prompt for Claude or a Grok bot", "", "```", applyPrompt(dir, q.items.length), "```", "");
+  q.items.forEach((it, i) => {
+    out.push(`## ${i + 1}. ${it.title} · ${it.company}`, "");
+    out.push(`- Application ID: **${it.application_id}** · portal: ${it.portal}${it.needs_signin ? " · asked for a sign-in last time: one quick look, then report needs_signin if it still does" : ""}`);
+    out.push(`- Posting: ${it.url ?? "(no URL recorded)"}${it.location ? ` · ${it.location}` : ""}`);
+    if (it.fit_score != null) out.push(`- Fit ${it.fit_score}: ${it.fit_reasons.join("; ")}`);
+    const res = materialsDir ? path.join(materialsDir, String(it.application_id), path.basename(it.resume_file ?? "")) : it.resume_file;
+    const cl = materialsDir ? path.join(materialsDir, String(it.application_id), path.basename(it.cover_letter_file ?? "")) : it.cover_letter_file;
+    out.push(`- ${it.resume_version === "cv" ? "CV" : "Resume"}: ${res ?? "(not rendered)"}`, `- Cover letter: ${cl ?? "(not rendered)"}`);
+    if (it.answers.length) {
+      out.push("- Screening answers:");
+      for (const a of it.answers) out.push(`  - **${a.question}** ${a.answer}`);
+    }
+    out.push("");
+  });
+  if (q.waiting.length) {
+    out.push("## Waiting on you (not for the agent)", "");
+    for (const w of q.waiting) out.push(`- ${w.title} · ${w.company} (#${w.application_id}): ${w.why}`);
+    out.push("");
+  }
+  return out.join("\n");
+}
+
+function writeAtomic(file: string, text: string) {
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, text);
+  fs.renameSync(tmp, file);
+}
+
+/** Copies each item's rendered files into <dir>/materials/<application_id>/ and removes folders no longer queued. */
+function mirrorMaterials(dir: string, items: ApplyItem[]) {
+  const root = path.join(dir, "materials");
+  fs.mkdirSync(root, { recursive: true });
+  const keep = new Set(items.map((i) => String(i.application_id)));
+  for (const name of fs.readdirSync(root)) {
+    if (/^\d+$/.test(name) && !keep.has(name)) fs.rmSync(path.join(root, name), { recursive: true, force: true });
+  }
+  for (const it of items) {
+    const dest = path.join(root, String(it.application_id));
+    fs.mkdirSync(dest, { recursive: true });
+    for (const f of [it.resume_file, it.resume_docx, it.cover_letter_file, it.cover_letter_docx]) {
+      if (f && fs.existsSync(f)) fs.copyFileSync(f, path.join(dest, path.basename(f)));
+    }
+  }
+  return root;
+}
+
+/** Writes the apply queue to data/handoff/ (and the mirror folder, if set). Returns where it went. */
+export function writeHandoff(): { dirs: string[]; count: number; waiting: number; errors: string[] } {
+  const q = buildApplyQueue();
+  const dirs: string[] = [];
+  const errors: string[] = [];
+  const targets: [string, boolean][] = [[HANDOFF_DIR, false]];
+  const mirror = mirrorDir();
+  if (mirror && path.resolve(mirror) !== path.resolve(HANDOFF_DIR)) targets.push([mirror, true]);
+  for (const [dir, isMirror] of targets) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const materials = isMirror ? mirrorMaterials(dir, q.items) : null;
+      // In the mirror folder the file paths point at its own copies, so an agent that only sees that folder can upload them.
+      const local = (f: string | null, id: number) => (f && materials ? path.join(materials, String(id), path.basename(f)) : f);
+      const out = materials
+        ? {
+            ...q,
+            items: q.items.map((i) => ({
+              ...i,
+              resume_file: local(i.resume_file, i.application_id),
+              resume_docx: local(i.resume_docx, i.application_id),
+              cover_letter_file: local(i.cover_letter_file, i.application_id),
+              cover_letter_docx: local(i.cover_letter_docx, i.application_id),
+            })),
+          }
+        : q;
+      writeAtomic(path.join(dir, QUEUE_JSON), JSON.stringify(out, null, 2));
+      writeAtomic(path.join(dir, QUEUE_MD), queueMarkdown(q, dir, materials));
+      dirs.push(dir);
+    } catch (e) {
+      errors.push(`${dir}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { dirs, count: q.items.length, waiting: q.waiting.length, errors };
+}
+
+// ---------- results coming back ----------
+
+export const ApplyResult = z.object({
+  application_id: z.number().int().positive(),
+  result: z.enum(["applied", "needs_signin", "needs_answers", "posting_closed", "failed"]),
+  note: z.string().max(2000).nullish(),
+  confirmation: z.string().max(2000).nullish(),
+  by: z.string().max(40).nullish(),
+});
+export type ApplyResultLine = z.infer<typeof ApplyResult>;
+
+/**
+ * Records one result from the apply agent. Only applications in the apply queue (stage "approved") can be marked
+ * applied or closed, never a job at the current employer, and nothing here can approve a job: same rules as the
+ * agent API. Returns what it did, or why it refused.
+ */
+export function recordApplyResult(r: ApplyResultLine): { ok: true; did: string } | { ok: false; error: string } {
+  const app = getApplication(r.application_id);
+  if (!app) return { ok: false, error: `application ${r.application_id} not found` };
+  const who = r.by ? `the ${r.by} apply agent` : "the apply agent";
+  const note = r.note?.trim() || null;
+  if (r.result === "applied") {
+    if (app.internal) return { ok: false, error: `#${app.id} is at your current employer: apply internally and mark it on the Queue` };
+    if (app.stage !== "approved") return { ok: false, error: `#${app.id} is "${app.stage}", not in the apply queue` };
+    changeStage(app.id, "applied", {
+      source: r.by ?? "apply-agent",
+      detail: `Applied by ${who}${note ? `: ${note}` : ""}`,
+      extra: {
+        submittedAt: iso(),
+        needsSignin: false,
+        needsAnswers: false,
+        confirmationText: r.confirmation ?? app.confirmationText,
+        nextAction: "Follow up",
+        nextActionDue: iso(daysFromNow(FOLLOW_UP_DAYS)),
+      },
+    });
+    clearSigninOnPortal(app);
+    return { ok: true, did: "applied" };
+  }
+  if (r.result === "posting_closed") {
+    if (app.stage !== "approved") return { ok: false, error: `#${app.id} is "${app.stage}", not in the apply queue` };
+    changeStage(app.id, "closed", { source: r.by ?? "apply-agent", detail: `Posting closed (${who})${note ? `: ${note}` : ""}`, extra: { closedReason: "posting_closed", nextAction: null, nextActionDue: null } });
+    return { ok: true, did: "closed" };
+  }
+  if (app.stage !== "approved") return { ok: false, error: `#${app.id} is "${app.stage}", not in the apply queue` };
+  if (r.result === "needs_signin") {
+    db.update(applications).set({ needsSignin: true, needsAnswers: false, signinCheckedAt: iso(), portalNote: note ?? app.portalNote }).where(eq(applications.id, app.id)).run();
+    logEvent({ applicationId: app.id, type: "portal_update", title: "Needs you: portal sign-in", detail: note ?? "The portal wanted an account, password or CAPTCHA.", source: r.by ?? "apply-agent" });
+    return { ok: true, did: "flagged sign-in" };
+  }
+  if (r.result === "needs_answers") {
+    db.update(applications).set({ needsAnswers: true, needsSignin: false, portalNote: note ?? app.portalNote }).where(eq(applications.id, app.id)).run();
+    logEvent({ applicationId: app.id, type: "portal_update", title: "Needs you: answers for the form", detail: note ?? "The form asks for something the profile doesn't have.", source: r.by ?? "apply-agent" });
+    return { ok: true, did: "flagged answers" };
+  }
+  logEvent({ applicationId: app.id, type: "note", title: `Apply attempt failed (${who})`, detail: note, source: r.by ?? "apply-agent" });
+  return { ok: true, did: "noted failure" };
+}
+
+/**
+ * Reads apply-results.jsonl from data/handoff/ and the mirror folder, records each line, and moves what it read
+ * into apply-results.archive.jsonl (with what happened), so a line is never recorded twice. The file is renamed
+ * before it's read: an agent appending at that moment starts a new file and nothing is lost.
+ */
+export function importApplyResults(): { recorded: number; refused: string[] } {
+  let recorded = 0;
+  const refused: string[] = [];
+  const dirs = [HANDOFF_DIR, mirrorDir()].filter((d): d is string => Boolean(d));
+  for (const dir of [...new Set(dirs.map((d) => path.resolve(d)))]) {
+    const file = path.join(dir, RESULTS_FILE);
+    if (!fs.existsSync(file) || fs.statSync(file).size === 0) continue;
+    const taken = `${file}.reading-${Date.now()}`;
+    try {
+      fs.renameSync(file, taken);
+    } catch {
+      continue;
+    }
+    const archived: string[] = [];
+    for (const raw of fs.readFileSync(taken, "utf8").split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      let outcome: string;
+      try {
+        const parsed = ApplyResult.parse(JSON.parse(line));
+        const r = recordApplyResult(parsed);
+        if (r.ok) {
+          recorded++;
+          outcome = r.did;
+        } else {
+          refused.push(r.error);
+          outcome = `refused: ${r.error}`;
+        }
+      } catch (e) {
+        const why = e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : e instanceof Error ? e.message : String(e);
+        refused.push(`unreadable line: ${why}`);
+        outcome = `unreadable: ${why}`;
+      }
+      archived.push(JSON.stringify({ at: iso(), line, outcome }));
+    }
+    fs.appendFileSync(path.join(dir, ARCHIVE_FILE), archived.map((l) => `${l}\n`).join(""));
+    fs.rmSync(taken, { force: true });
+  }
+  return { recorded, refused };
+}
+
+/** Reads results that came back, then rewrites the queue. Safe to call often. */
+export function syncHandoff() {
+  const imported = importApplyResults();
+  const written = writeHandoff();
+  return { ...written, recorded: imported.recorded, refused: imported.refused };
+}
+
+const g = globalThis as unknown as { __lodestarHandoffTimer?: NodeJS.Timeout };
+
+/** Every two minutes while the app runs: pick up results from the apply agent and refresh the queue file. */
+export function startHandoffTimer() {
+  if (g.__lodestarHandoffTimer) return;
+  const minutes = Math.max(1, Number(process.env.LODESTAR_HANDOFF_MINUTES) || 2);
+  const tick = () => {
+    try {
+      syncHandoff();
+    } catch {
+      // The database is busy or mid-migration; the next tick tries again.
+    }
+  };
+  g.__lodestarHandoffTimer = setInterval(tick, minutes * 60_000);
+  g.__lodestarHandoffTimer.unref();
+  setTimeout(tick, 20_000).unref();
+}

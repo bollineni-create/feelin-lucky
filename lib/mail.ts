@@ -8,7 +8,7 @@ import path from "node:path";
 import { and, count, desc, eq, gte, inArray, isNull, ne, notLike, or, sql } from "drizzle-orm";
 import { ROOT, db, schema } from "./db";
 import { ApiError } from "./agent-auth";
-import { FOLLOW_UP_DAYS, activeRun, autoApplyBlocker, changeStage, daysAgo, getApplication, iso, listApplications, logEvent } from "./logic";
+import { FOLLOW_UP_DAYS, activeRun, changeStage, daysAgo, getApplication, iso, listApplications, logEvent } from "./logic";
 import { LIVE_STAGES, classify, companyDomain, emailStageMove, isJobEmail, matchEmail, parseSender, prefilter, type Candidate, type Sender } from "./mail-rules";
 import type { Application, Email, EmailKind, MailCheckSummary, MailSettings, Stage } from "@/db/schema";
 
@@ -223,8 +223,6 @@ function attach(e: Email, appId: number, o: { kind: EmailKind; source: Source; r
     extra.needsSignin = false;
     extra.nextAction = "Follow up";
     extra.nextActionDue = iso(new Date(Date.parse(e.receivedAt) + FOLLOW_UP_DAYS * DAY));
-    // A strong match the agent submitted without recording it still counts toward today's auto-apply cap.
-    if (app.stage === "found" && autoApplyBlocker(app) == null) extra.autoApplied = true;
   } else if (to === "closed") {
     extra.closedReason = "rejected";
     extra.nextAction = null;

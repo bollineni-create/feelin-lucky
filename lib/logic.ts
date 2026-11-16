@@ -48,7 +48,7 @@ type EventType = "status_change" | "email" | "portal_update" | "note";
 
 export const STAGE_LABEL: Record<Stage, string> = {
   found: "Found",
-  approved: "Approved",
+  approved: "Apply queue",
   applied: "Applied",
   screening: "Screening",
   interviewing: "Interviewing",
@@ -217,49 +217,6 @@ export function queueItems() {
     });
 }
 
-const startOfToday = () => {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-
-/** Why a found application may not be auto-applied, or null if it may. */
-export function autoApplyBlocker(a: AppWithJob): string | null {
-  const c = getCriteria();
-  if (!c.autoApply) return "auto-apply is off";
-  if (!getProfile().confirmed) return "profile is not confirmed";
-  if (a.stage !== "found") return `stage is "${a.stage}"`;
-  if (a.internal) return "it's at your current employer: apply through the internal job site";
-  if (!hasMaterials(a) || !a.resumePath) return "materials are not ready";
-  if (a.needsSignin) return "portal needs sign-in";
-  if (a.needsAnswers) return "the form needs answers from you";
-  if (!c.autoApplySources.includes(a.job.source)) return `auto-apply is off for ${a.job.source} jobs`;
-  const min = Math.max(c.autoApplyMinScore, thresholdFor(a.job.companyId));
-  if (a.job.fitScore == null || a.job.fitScore < min) return `fit score below ${min}`;
-  const text = [a.resumeMd, a.coverLetterMd, ...(a.answers ?? []).map((q) => q.answer)].join("\n");
-  if (text.includes("[NEEDS YOU")) return "an answer needs your input";
-  return null;
-}
-
-/** Auto-applications submitted since local midnight. */
-export function autoAppliedToday() {
-  return db
-    .select({ n: sql<number>`count(*)` })
-    .from(applications)
-    .where(and(eq(applications.autoApplied, true), sql`${applications.submittedAt} >= ${iso(startOfToday())}`))
-    .get()!.n;
-}
-
-/** Found applications the agent may submit without a Queue approval, watchlist companies first, within today's cap. */
-export function autoApplyCandidates(): AppWithJob[] {
-  const c = getCriteria();
-  if (!c.autoApply) return [];
-  const remaining = Math.max(0, c.autoApplyDailyCap - autoAppliedToday());
-  return listApplications(eq(applications.stage, "found"))
-    .filter((a) => autoApplyBlocker(a) == null)
-    .sort(byWatchlistThenScore)
-    .slice(0, remaining);
-}
 
 export function latestRuns(limit = 8) {
   return db.select().from(runs).orderBy(desc(runs.startedAt)).limit(limit).all();
@@ -280,11 +237,25 @@ export function runUnfinished(run: Pick<RunRow, "status" | "currentPhase" | "err
   return run.status === "failed" && !!run.currentPhase && (run.errors ?? []).some((e) => INTERRUPTED.test(e));
 }
 
+const RUN_PHASES = ["find", "prepare", "track"];
+
+/** Companies the latest job-board feed scan read successfully (data/feed-scan.json). */
+function lastFeedScanCompanies(): number[] {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(ROOT, "data", "feed-scan.json"), "utf8")) as { companies?: { company_id: number; error?: string }[] };
+    return (s.companies ?? []).filter((c) => !c.error).map((c) => c.company_id);
+  } catch {
+    return [];
+  }
+}
+
 /** The phases left when a run stopped in `currentPhase`: that phase and the ones after it, in run order. */
 export function resumePhases(run: Pick<RunRow, "phase" | "currentPhase">): string[] {
   const phases = run.phase.split(",").map((p) => p.trim()).filter(Boolean);
   const at = run.currentPhase ? phases.indexOf(run.currentPhase) : -1;
-  return at >= 0 ? phases.slice(at) : phases;
+  // A run from before Lodestar stopped applying can have "submit" in its phases; the script no longer runs it.
+  const left = (at >= 0 ? phases.slice(at) : phases).filter((p) => RUN_PHASES.includes(p));
+  return left.length ? left : [...RUN_PHASES];
 }
 
 /** The most recent run that is over, with what it left unfinished, for the agent's context and the Pipeline page. */
@@ -392,7 +363,31 @@ export function runActivity(run: Pick<typeof runs.$inferSelect, "startedAt" | "f
     .from(lookups)
     .where(and(eq(lookups.status, "done"), sql`${lookups.doneAt} >= ${from}`, sql`${lookups.doneAt} <= ${to}`))
     .get()!.n;
+  // What the agent itself did, apart from the job-board feed scan: companies the latest feed scan didn't read, and
+  // new jobs without the feed's "Found:" event (feed finds always get one). Sets, not counts, so a feed scan that
+  // overlapped the run's start can't make the agent's own work look like nothing.
+  const feedRead = new Set(lastFeedScanCompanies());
+  const scannedIds = db
+    .select({ id: companies.id })
+    .from(companies)
+    .where(and(sql`${companies.lastScannedAt} >= ${from}`, sql`${companies.lastScannedAt} <= ${to}`))
+    .all()
+    .map((c) => c.id);
+  const agentJobs = db
+    .select({ n: sql<number>`count(*)` })
+    .from(jobs)
+    .innerJoin(applications, eq(applications.jobId, jobs.id))
+    .where(
+      and(
+        sql`${jobs.firstSeenAt} >= ${from}`,
+        sql`${jobs.firstSeenAt} <= ${to}`,
+        sql`not exists (select 1 from ${events} where ${events.applicationId} = ${applications.id} and ${events.source} = 'feed')`,
+      ),
+    )
+    .get()!.n;
   return {
+    agent_companies_scanned: scannedIds.filter((id) => !feedRead.has(id)).length,
+    agent_jobs_found: agentJobs,
     companies_scanned: scanned,
     companies_unscanned: unscanned,
     lookups_done: lookupsDone,

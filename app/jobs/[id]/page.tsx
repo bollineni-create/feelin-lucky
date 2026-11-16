@@ -53,7 +53,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
               </Link>
             ) : null}
             {a.internal ? (
-              <Link className="tag amber" href="/settings#employer" title="Your current employer: the agent prepares this but never submits it">
+              <Link className="tag amber" href="/settings#employer" title="Your current employer: prepared here, never sent to the apply queue">
                 Apply internally
               </Link>
             ) : null}
@@ -83,14 +83,14 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
           {a.stage === "found" && !a.internal ? (
             <form action={approveApplication.bind(null, a.id)}>
               <button className="btn btn-primary" type="submit" disabled={!a.resumeMd || !a.coverLetterMd}>
-                Approve and submit
+                Send to apply queue
               </button>
             </form>
           ) : null}
           {a.stage === "approved" ? (
             <form action={undoApplication.bind(null, a.id)}>
               <button className="btn" type="submit">
-                Undo approval
+                Take out of the apply queue
               </button>
             </form>
           ) : null}
@@ -104,14 +104,14 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
 
       {a.internal && (a.stage === "found" || a.stage === "approved") ? (
         <div className="banner">
-          This job is at {j.companyName}, your current employer. Apply through the internal job site using the materials below; the agent won&apos;t submit it. Then
+          This job is at {j.companyName}, your current employer. Apply through the internal job site using the materials below; it never goes to the apply queue. Then
           click <strong>I applied internally</strong>.
         </div>
       ) : null}
-      {a.needsSignin ? <div className="banner">This portal needs a sign-in, account or CAPTCHA. The agent won&apos;t do that; submit it yourself and set the stage to Applied.</div> : null}
+      {a.needsSignin ? <div className="banner">This portal needs a sign-in, account or CAPTCHA. The apply agent won&apos;t do that: make the account in Chrome and press I&apos;ve signed in on the Queue, or apply yourself and set the stage to Applied.</div> : null}
       {a.needsAnswers ? (
         <div className="banner">
-          {a.portalNote ?? "The form asks for something your profile doesn't have."} Add the answer under the screening questions below and save: the agent tries again on the next run.
+          {a.portalNote ?? "The form asks for something your profile doesn't have."} Add the answer under the screening questions below and save: it goes back to the apply agent.
         </div>
       ) : null}
 
