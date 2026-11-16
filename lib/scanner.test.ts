@@ -21,7 +21,11 @@ let H: typeof import("./handoff");
 const co: Record<string, number> = {};
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+let stripeTaken = false;
+let stripeDown = false;
 const fetcher: Fetcher = async (url) => {
+  if (url.includes("/boards/stripe/jobs") && stripeDown) return json({ jobs: [] });
+  if (url.includes("/boards/stripe/jobs") && stripeTaken) return json({ jobs: [{ id: 2, title: "Staff Software Engineer", location: { name: "Seattle, WA" }, absolute_url: "https://stripe.com/jobs/2" }] });
   if (url.includes("/boards/stripe/jobs"))
     return json({
       jobs: [
@@ -169,4 +173,30 @@ test("a sign-in wall or a question only the user can answer goes back to the use
   assert.equal(q.items.length, 0);
   assert.match(q.waiting[0].why, /Desired salary/);
   assert.equal(L.getApplication(cd)!.stage, "approved", "still in the queue, waiting on the user");
+});
+
+test("a found job its board no longer lists is closed; an empty board closes nothing", async () => {
+  D.db.insert(D.schema.jobs).values({ companyId: co.Stripe, companyName: "Stripe", source: "careers", title: "FP&A Manager", externalId: "gh:99", dedupeKey: "stripe|fp&a manager|seattle" }).run();
+  const j = D.db.select().from(D.schema.jobs).where(eq(D.schema.jobs.externalId, "gh:99")).get()!;
+  const appId = D.db.insert(D.schema.applications).values({ jobId: j.id, stage: "found" }).returning().get().id;
+
+  stripeDown = true;
+  await F.scanFeeds({ fetcher, companyIds: [co.Stripe] });
+  assert.equal(L.getApplication(appId)!.stage, "found", "an empty board is an outage, not every posting gone");
+
+  stripeDown = false;
+  stripeTaken = true;
+  const s = await F.scanFeeds({ fetcher, companyIds: [co.Stripe] });
+  assert.equal(s.closed, 1);
+  const a = L.getApplication(appId)!;
+  assert.equal(a.stage, "closed");
+  assert.equal(a.closedReason, "posting_closed");
+  // Jobs past "found" (queued, applied) are never closed this way.
+  assert.equal(L.listApplications().find((x) => x.job.title === "Treasury Manager")!.stage, "applied");
+});
+
+test("an old run stopped in the submit phase resumes with the phases that still exist", () => {
+  assert.deepEqual(L.resumePhases({ phase: "submit,find,prepare,track", currentPhase: "submit" }), ["find", "prepare", "track"]);
+  assert.deepEqual(L.resumePhases({ phase: "find,prepare,track", currentPhase: "prepare" }), ["prepare", "track"]);
+  assert.deepEqual(L.resumePhases({ phase: "submit", currentPhase: "submit" }), ["find", "prepare", "track"]);
 });

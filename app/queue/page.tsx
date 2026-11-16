@@ -97,7 +97,7 @@ export default function QueuePage() {
         {accounts.length ? (
           <details className="panel" open={accounts.some((s) => s.flagged)}>
             <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-              {accounts.length} job {accounts.length === 1 ? "site needs" : "sites need"} an account before the apply agent can apply ({accounts.reduce((n, s) => n + s.count, 0)} approved{" "}
+              {accounts.length} job {accounts.length === 1 ? "site needs" : "sites need"} an account before the apply agent can apply ({accounts.reduce((n, s) => n + s.count, 0)} queued{" "}
               {accounts.reduce((n, s) => n + s.count, 0) === 1 ? "job" : "jobs"})
             </summary>
             <p className="secondary" style={{ margin: "10px 0 12px" }}>
@@ -111,7 +111,7 @@ export default function QueuePage() {
                   <span>
                     <strong>{s.companies.join(", ")}</strong>{" "}
                     <span className="secondary">
-                      · {s.portal} · {s.count} approved{s.flagged ? ` · asked for a sign-in` : " · not tried yet"}
+                      · {s.portal} · {s.count} queued{s.flagged ? ` · asked for a sign-in` : " · not tried yet"}
                     </span>
                   </span>
                   <span style={{ display: "flex", gap: 8 }}>
@@ -137,7 +137,7 @@ export default function QueuePage() {
         {needAnswers.length ? (
           <details className="panel" open>
             <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-              {needAnswers.length} approved {needAnswers.length === 1 ? "form asks" : "forms ask"} for answers you haven&apos;t given yet
+              {needAnswers.length} queued {needAnswers.length === 1 ? "form asks" : "forms ask"} for answers you haven&apos;t given yet
             </summary>
             <p className="secondary" style={{ margin: "10px 0 12px" }}>
               These open without an account, so signing in won&apos;t help. The agent stopped because a required question has no answer in your

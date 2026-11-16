@@ -44,7 +44,10 @@ export const GET = agentRoute(async (req) => {
   const dueNormal = companiesDue.filter((c) => c.priority !== "high");
   const companiesToScan = [...dueHigh, ...dueNormal.slice(0, Math.max(10, companyLimit - dueHigh.length))];
 
-  const open = listApplications(inArray(applications.stage, ["found", ...OPEN_STAGES])).map((a) => ({
+  // Applications in flight (applied and later), for the track phase and for placing emails. Found jobs aren't listed
+  // here: a first job-board scan alone brings in about a thousand, and the agent reads this context several times a
+  // run. The found jobs worth re-checking for a closed posting go in `found_to_recheck`, a few dozen at a time.
+  const toOpen = (a: AppWithJob) => ({
     application_id: a.id,
     job_id: a.jobId,
     company: a.job.companyName,
@@ -58,7 +61,17 @@ export const GET = agentRoute(async (req) => {
     // From Apple Mail: when the employer's confirmation arrived, and the latest email about it.
     email_confirmed_at: a.emailConfirmedAt,
     last_email_at: a.lastEmailAt,
-  }));
+  });
+  const open = listApplications(inArray(applications.stage, OPEN_STAGES)).map(toOpen);
+  // Scored, kept found jobs the app can't watch itself (LinkedIn, custom careers sites, Workday, whose search can't
+  // tell a posting is gone): the oldest first, since they're the likeliest to have closed. Listed-board jobs
+  // (Greenhouse, Lever, Ashby, SmartRecruiters) are closed by the feed scan when the board drops them.
+  const recheckLimit = Math.min(Number(url.searchParams.get("recheck_limit") ?? 40) || 40, 200);
+  const foundToRecheck = listApplications(eq(applications.stage, "found"))
+    .filter((a) => a.job.fitScore != null && !/^(gh|lever|ashby|sr):/.test(a.job.externalId ?? ""))
+    .sort((x, y) => x.job.firstSeenAt.localeCompare(y.job.firstSeenAt))
+    .slice(0, recheckLimit)
+    .map(toOpen);
 
   const found = listApplications(eq(applications.stage, "found")).sort(byWatchlistThenScore);
   const watchlist = (a: AppWithJob) => ["high", "watchlist", "off_watchlist"][watchTier(a)];
@@ -183,6 +196,7 @@ export const GET = agentRoute(async (req) => {
     // Grok bot, agent/APPLY.md). This run never opens an application form or clicks Apply / Easy Apply / Submit.
     apply_queue_count: listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal).length,
     open_applications: open,
+    found_to_recheck: foundToRecheck,
     // `has_description`: the posting's text is already stored (job-board feeds store it). Read it with
     // GET /api/agent/jobs/:job_id instead of opening the page in Chrome.
     // Most promising first; `jobs_needing_score_total` counts the ones still waiting beyond this run's share.

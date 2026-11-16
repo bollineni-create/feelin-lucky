@@ -382,7 +382,7 @@ if [ "$STATUS" = "running" ]; then
   else fail_run "The agent exited (code $CODE) without closing the run. $KEPT See $LOG"; fi
 elif [[ ",$PHASE," == *",find,"* && "$STATUS" = "ok" && $(( ${SCANNED:-0} - FEED_COMPANIES )) -le 0 && $(( ${FOUND:-0} - FEED_NEW )) -le 0 && "${LOOKUPS:-0}" = "0" ]]; then
   # A find phase that marked no company scanned, settled no lookup and posted no job didn't search, whatever the agent reported.
-  fail_run "Find phase recorded no scanned companies, no lookups and no jobs; the agent didn't search. See $TRANSCRIPT"
+  fail_run "The agent scanned no company, settled no lookup and posted no job (the job-board feeds' finds don't count): it didn't search. See $TRANSCRIPT"
 else
   log "Run #$RUN_ID finished: $STATUS (exit $CODE)"
 fi

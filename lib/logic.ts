@@ -237,11 +237,15 @@ export function runUnfinished(run: Pick<RunRow, "status" | "currentPhase" | "err
   return run.status === "failed" && !!run.currentPhase && (run.errors ?? []).some((e) => INTERRUPTED.test(e));
 }
 
+const RUN_PHASES = ["find", "prepare", "track"];
+
 /** The phases left when a run stopped in `currentPhase`: that phase and the ones after it, in run order. */
 export function resumePhases(run: Pick<RunRow, "phase" | "currentPhase">): string[] {
   const phases = run.phase.split(",").map((p) => p.trim()).filter(Boolean);
   const at = run.currentPhase ? phases.indexOf(run.currentPhase) : -1;
-  return at >= 0 ? phases.slice(at) : phases;
+  // A run from before Lodestar stopped applying can have "submit" in its phases; the script no longer runs it.
+  const left = (at >= 0 ? phases.slice(at) : phases).filter((p) => RUN_PHASES.includes(p));
+  return left.length ? left : [...RUN_PHASES];
 }
 
 /** The most recent run that is over, with what it left unfinished, for the agent's context and the Pipeline page. */

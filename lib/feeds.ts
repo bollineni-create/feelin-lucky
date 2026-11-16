@@ -1,15 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { DATA_DIR, db, schema } from "./db";
-import { BOARD_LABEL, buildMatcher, detectBoard, fetchBoard, inPool, type Board, type Fetcher } from "./feed-boards";
+import { BOARD_LABEL, ID_PREFIX, buildMatcher, detectBoard, fetchBoard, inPool, type Board, type Fetcher } from "./feed-boards";
 import { KNOWN_BOARDS } from "./known-boards";
 import { ingestJob } from "./ingest";
-import { getCriteria, iso } from "./logic";
+import { changeStage, getCriteria, iso, listApplications } from "./logic";
 
-const { companies } = schema;
+const { companies, applications, jobs } = schema;
 
-export type FeedCompanyResult = { company_id: number; company: string; board: string; seen: number; matched: number; created: number; error?: string };
+export type FeedCompanyResult = { company_id: number; company: string; board: string; seen: number; matched: number; created: number; closed: number; error?: string };
 export type FeedScanSummary = {
   started_at: string;
   finished_at: string;
@@ -18,6 +18,8 @@ export type FeedScanSummary = {
   postings_seen: number;
   matched: number;
   new_jobs: number;
+  /** Found jobs closed because their board no longer lists them. */
+  closed: number;
   companies: FeedCompanyResult[];
   errors: string[];
 };
@@ -74,12 +76,12 @@ export function scanFeeds(opts: { companyIds?: number[]; fetcher?: Fetcher } = {
     const results: FeedCompanyResult[] = [];
 
     await inPool(targets, 4, async ({ company, board }) => {
-      const r: FeedCompanyResult = { company_id: company.id, company: company.name, board: board.kind, seen: 0, matched: 0, created: 0 };
+      const r: FeedCompanyResult = { company_id: company.id, company: company.name, board: board.kind, seen: 0, matched: 0, created: 0, closed: 0 };
       try {
         // A high-priority (red) company is worth a look anywhere in the US: its jobs are kept on the function alone,
         // and the score weighs the location. Everyone else has to be in the user's places or remote.
         const keep = company.priority === "high" ? matcher.keepAnywhereInUS : matcher.keep;
-        const { seen, kept } = await fetchBoard(board, matcher, opts.fetcher ?? fetch, new Date(), keep);
+        const { seen, kept, allIds } = await fetchBoard(board, matcher, opts.fetcher ?? fetch, new Date(), keep);
         r.seen = seen;
         r.matched = kept.length;
         for (const p of kept) {
@@ -101,6 +103,19 @@ export function scanFeeds(opts: { companyIds?: number[]; fetcher?: Fetcher } = {
           );
           if (res.status === "created") r.created++;
         }
+        // The board lists every open posting, so a found job from it that's no longer listed has been taken down.
+        // Close it here, so the agent never spends browser time re-opening it. An empty board is treated as an
+        // outage, not as every posting gone.
+        if (allIds && allIds.size > 0) {
+          const prefix = ID_PREFIX[board.kind];
+          const gone = listApplications(and(eq(applications.stage, "found"), eq(jobs.companyId, company.id))).filter(
+            (a) => a.job.externalId?.startsWith(prefix) && !allIds.has(a.job.externalId),
+          );
+          for (const a of gone) {
+            changeStage(a.id, "closed", { source: "feed", detail: `No longer on ${company.name}'s ${BOARD_LABEL[board.kind]} board`, extra: { closedReason: "posting_closed" } });
+            r.closed++;
+          }
+        }
         db.update(companies)
           .set({ lastScannedAt: iso(), scanNote: null, scanNoteAt: null, ...(company.atsType ? {} : { atsType: board.kind }) })
           .where(eq(companies.id, company.id))
@@ -120,6 +135,7 @@ export function scanFeeds(opts: { companyIds?: number[]; fetcher?: Fetcher } = {
       postings_seen: results.reduce((n, r) => n + r.seen, 0),
       matched: results.reduce((n, r) => n + r.matched, 0),
       new_jobs: results.reduce((n, r) => n + r.created, 0),
+      closed: results.reduce((n, r) => n + r.closed, 0),
       companies: results,
       errors: results.filter((r) => r.error).map((r) => `${r.company} (${BOARD_LABEL[r.board as keyof typeof BOARD_LABEL]}): ${r.error}`),
     };
@@ -139,5 +155,5 @@ export function scanFeeds(opts: { companyIds?: number[]; fetcher?: Fetcher } = {
 export function feedScanLine(s: FeedScanSummary) {
   if (!s.companies_on_boards) return "No watchlist company has a Greenhouse, Lever, Ashby, SmartRecruiters or Workday careers URL yet.";
   const fails = s.companies_on_boards - s.companies_ok;
-  return `Job boards: ${s.companies_ok} of ${s.companies_on_boards} companies read, ${s.postings_seen} postings, ${s.matched} matched the criteria, ${s.new_jobs} new${fails ? ` · ${fails} board${fails === 1 ? "" : "s"} didn't answer (left for the agent)` : ""}`;
+  return `Job boards: ${s.companies_ok} of ${s.companies_on_boards} companies read, ${s.postings_seen} postings, ${s.matched} matched the criteria, ${s.new_jobs} new${s.closed ? `, ${s.closed} closed (taken down)` : ""}${fails ? ` · ${fails} board${fails === 1 ? "" : "s"} didn't answer (left for the agent)` : ""}`;
 }

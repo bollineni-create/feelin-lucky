@@ -31,6 +31,9 @@ export type FeedPosting = {
 
 export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
+/** The prefix each board's external ids carry (gh:123), so a job can be traced back to the board that listed it. */
+export const ID_PREFIX: Record<BoardKind, string> = { greenhouse: "gh:", lever: "lever:", ashby: "ashby:", smartrecruiters: "sr:", workday: "wd:" };
+
 export const BOARD_LABEL: Record<BoardKind, string> = {
   greenhouse: "Greenhouse",
   lever: "Lever",
@@ -357,7 +360,8 @@ export async function fetchBoard(
   fetcher: Fetcher = fetch,
   now = new Date(),
   keep: (p: FeedPosting) => boolean = matcher.keep,
-): Promise<{ seen: number; kept: FeedPosting[] }> {
+): Promise<{ seen: number; kept: FeedPosting[]; allIds?: Set<string> }> {
+  // Workday is searched, not listed, so its results can't say a posting is gone: no allIds.
   if (board.kind === "workday") return workday(fetcher, board, matcher.searchTerms, keep, 80, now);
   const all =
     board.kind === "greenhouse"
@@ -367,7 +371,7 @@ export async function fetchBoard(
         : board.kind === "ashby"
           ? await ashby(fetcher, board.token)
           : await smartrecruiters(fetcher, board.token);
-  return { seen: all.length, kept: all.filter(keep) };
+  return { seen: all.length, kept: all.filter(keep), allIds: new Set(all.map((p) => p.externalId)) };
 }
 
 // ---------- matching ----------
