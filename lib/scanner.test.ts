@@ -290,5 +290,12 @@ test("auto-queue sends every match at or above its score to the apply queue, and
   L.changeStage(edge, "found", { source: "you", detail: "Undone" });
   assert.equal(H.autoQueue(), 0);
   assert.equal(stage(edge), "found");
+
+  // Undoing a skip isn't a pull-back: that job was never in the queue.
+  const skipped = add("AQ Skipped", 80, true);
+  L.changeStage(skipped, "closed", { source: "you", detail: "Skipped", extra: { closedReason: "skipped" } });
+  L.changeStage(skipped, "found", { source: "you", detail: "Undone" });
+  assert.equal(H.autoQueue(), 1);
+  assert.equal(stage(skipped), "approved");
   D.db.update(D.schema.searchCriteria).set({ autoApply: false }).where(eq(D.schema.searchCriteria.id, 1)).run();
 });
