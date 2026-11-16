@@ -178,3 +178,71 @@ test("a rate-limited board is retried, not written off", async () => {
     backoff.wait = real;
   }
 });
+
+test("httpsFetch posts a body and hands back status, headers and JSON", async () => {
+  const http = await import("node:http");
+  const { httpsFetch } = await import("./feed-boards");
+  // node:https can't reach a plain-http test server, so check the request shape through a stubbed https.request.
+  const https = (await import("node:https")).default;
+  const real = https.request;
+  let seen: { method?: string; headers?: Record<string, string>; body?: string } = {};
+  (https as unknown as { request: unknown }).request = ((_url: string, opts: { method: string; headers: Record<string, string> }, cb: (res: unknown) => void) => {
+    const { PassThrough } = require("node:stream");
+    const res = new PassThrough() as unknown as NodeJS.ReadableStream & { statusCode: number; headers: Record<string, string> };
+    res.statusCode = 429;
+    res.headers = { "retry-after": "4", "content-type": "application/json" };
+    const req = new (require("node:events").EventEmitter)();
+    req.end = (b: string) => {
+      seen = { method: opts.method, headers: opts.headers, body: b };
+      cb(res);
+      (res as unknown as { end: (s: string) => void }).end('{"ok":false}');
+    };
+    req.destroy = () => {};
+    return req;
+  }) as never;
+  try {
+    const r = await httpsFetch("https://x.example/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"a":1}' });
+    assert.equal(r.status, 429);
+    assert.equal(r.headers.get("retry-after"), "4");
+    assert.deepEqual(await r.json(), { ok: false });
+    assert.equal(seen.method, "POST");
+    assert.equal(seen.body, '{"a":1}');
+    assert.equal(seen.headers?.["Content-Length"], "7");
+    assert.equal(seen.headers?.["sec-fetch-mode"], undefined);
+  } finally {
+    (https as unknown as { request: unknown }).request = real;
+    void http;
+  }
+});
+
+test("httpsFetch rejects on timeout even when the response stalls after its headers", async () => {
+  const net = await import("node:net");
+  const tls = await import("node:tls");
+  void net; void tls;
+  const { httpsFetch } = await import("./feed-boards");
+  const https = (await import("node:https")).default;
+  const real = https.request;
+  const { PassThrough } = await import("node:stream");
+  const { EventEmitter } = await import("node:events");
+  (https as unknown as { request: unknown }).request = ((_u: string, _o: unknown, cb: (res: unknown) => void) => {
+    const req = Object.assign(new EventEmitter(), {
+      end: () => {
+        const res = Object.assign(new PassThrough(), { statusCode: 200, headers: {}, complete: false });
+        cb(res);
+        res.write("{"); // headers and a first chunk, then nothing: no end, no error
+      },
+      destroy: () => {},
+    });
+    return req;
+  }) as never;
+  try {
+    const t = Date.now();
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 50); // a ref'd timer, like a request still waiting in a real scan
+    await assert.rejects(httpsFetch("https://stall.example/x", { signal: ctl.signal }), /timed out reading stall\.example/);
+    clearTimeout(timer);
+    assert.ok(Date.now() - t < 2000);
+  } finally {
+    (https as unknown as { request: unknown }).request = real;
+  }
+});

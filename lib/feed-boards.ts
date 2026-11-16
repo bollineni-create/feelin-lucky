@@ -1,3 +1,4 @@
+import https from "node:https";
 // Job-board feeds: the public JSON that Greenhouse, Lever, Ashby, SmartRecruiters and Workday serve for every
 // company's careers page. Reading these is faster and far more reliable than browsing the careers site (no
 // Chrome, no extension, no site permissions), so watchlist companies on these boards are scanned by the app
@@ -30,6 +31,54 @@ export type FeedPosting = {
 };
 
 export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * A plain node:https client in the shape of fetch. Workday's bot screen answers Node's built-in fetch with HTTP 429
+ * on the very first request from a home connection (fetch always adds browser headers such as
+ * `sec-fetch-mode: cors`), while the same request through node:https or curl gets 200. Every board is read with
+ * this, so they all go out the same way.
+ */
+export const httpsFetch: Fetcher = (url, init = {}) =>
+  new Promise<Response>((resolve, reject) => {
+    // Settles exactly once. An abort (the 25s timeout) rejects straight away instead of waiting for the socket to
+    // report an error or an end it may never emit once headers have arrived.
+    let settled = false;
+    const fail = (e: Error) => {
+      if (settled) return;
+      settled = true;
+      req.destroy();
+      reject(e);
+    };
+    const body = typeof init.body === "string" ? init.body : undefined;
+    const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) };
+    if (body !== undefined) headers["Content-Length"] = String(Buffer.byteLength(body));
+    const req = https.request(url, { method: init.method ?? "GET", headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () => {
+        if (settled) return;
+        settled = true;
+        const h = new Headers();
+        for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h.set(k, Array.isArray(v) ? v.join(", ") : v);
+        const status = res.statusCode ?? 0;
+        // Redirects and other non-2xx answers come back as they are; the callers only read JSON from 200s.
+        resolve(new Response(status === 204 || status === 304 ? null : Buffer.concat(chunks), { status: status < 200 || status > 599 ? 502 : status, headers: h }));
+      });
+      res.on("error", fail);
+      // The connection dropped mid-body: no "end" is coming.
+      res.on("close", () => {
+        if (!res.complete) fail(new Error(`connection to ${new URL(url).hostname} closed before the response finished`));
+      });
+    });
+    req.on("error", fail);
+    const signal = init.signal;
+    if (signal) {
+      const onAbort = () => fail(new Error(`timed out reading ${new URL(url).hostname}`));
+      if (signal.aborted) return onAbort();
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    req.end(body);
+  });
 
 /** The prefix each board's external ids carry (gh:123), so a job can be traced back to the board that listed it. */
 export const ID_PREFIX: Record<BoardKind, string> = { greenhouse: "gh:", lever: "lever:", ashby: "ashby:", smartrecruiters: "sr:", workday: "wd:" };
@@ -369,7 +418,7 @@ async function workday(
 export async function fetchBoard(
   board: Board,
   matcher: Matcher,
-  fetcher: Fetcher = fetch,
+  fetcher: Fetcher = httpsFetch,
   now = new Date(),
   keep: (p: FeedPosting) => boolean = matcher.keep,
 ): Promise<{ seen: number; kept: FeedPosting[]; allIds?: Set<string> }> {

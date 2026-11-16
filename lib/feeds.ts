@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { and, eq, inArray } from "drizzle-orm";
 import { DATA_DIR, db, schema } from "./db";
-import { BOARD_LABEL, ID_PREFIX, buildMatcher, detectBoard, fetchBoard, inPool, type Board, type Fetcher } from "./feed-boards";
+import { BOARD_LABEL, ID_PREFIX, httpsFetch, buildMatcher, detectBoard, fetchBoard, inPool, type Board, type Fetcher } from "./feed-boards";
 import { KNOWN_BOARDS } from "./known-boards";
 import { ingestJob } from "./ingest";
 import { changeStage, getCriteria, iso, listApplications } from "./logic";
@@ -83,7 +83,7 @@ export function scanFeeds(opts: { companyIds?: number[]; fetcher?: Fetcher } = {
         // A high-priority (red) company is worth a look anywhere in the US: its jobs are kept on the function alone,
         // and the score weighs the location. Everyone else has to be in the user's places or remote.
         const keep = company.priority === "high" ? matcher.keepAnywhereInUS : matcher.keep;
-        const { seen, kept, allIds } = await fetchBoard(board, matcher, opts.fetcher ?? fetch, new Date(), keep);
+        const { seen, kept, allIds } = await fetchBoard(board, matcher, opts.fetcher ?? httpsFetch, new Date(), keep);
         r.seen = seen;
         r.matched = kept.length;
         for (const p of kept) {
