@@ -10,6 +10,7 @@
 // With LODESTAR_HANDOFF_DIR set (e.g. a folder in iCloud Drive the Grok bridge reads), the same files go there
 // too, with copies of each job's resume and cover letter, and results are read from there as well.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,7 +33,43 @@ const ARCHIVE_FILE = "apply-results.archive.jsonl";
 export function mirrorDir(): string | null {
   const v = process.env.LODESTAR_HANDOFF_DIR?.trim();
   if (!v) return null;
-  return path.resolve(v.replace(/^~(?=$|\/)/, os.homedir()));
+  const dir = path.resolve(v.replace(/^~(?=$|\/)/, os.homedir()));
+  return mirrorOwnedHere(dir) ? dir : null;
+}
+
+/**
+ * One Lodestar per mirror folder. Two Macs pointed at the same iCloud folder (an old Mac waking up after the move to a
+ * new one) would each rewrite the queue from their own database and take each other's results. The first install to
+ * use the folder writes its install id to OWNER there; any other install leaves the folder alone. To move Lodestar to
+ * another Mac on purpose, delete OWNER from the folder.
+ */
+export const MIRROR_OWNER_FILE = "OWNER";
+function installId(): string {
+  const file = path.join(DATA_DIR, "install-id");
+  try {
+    return fs.readFileSync(file, "utf8").trim();
+  } catch {
+    const id = `${os.hostname()}-${crypto.randomUUID()}`;
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(file, `${id}\n`);
+    return id;
+  }
+}
+export function mirrorOwnedHere(dir: string): boolean {
+  const owner = path.join(dir, MIRROR_OWNER_FILE);
+  const me = installId();
+  try {
+    return fs.readFileSync(owner, "utf8").trim() === me;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return false; // unreadable (iCloud busy): don't claim it
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(owner, `${me}\n`, { flag: "wx" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 export type ApplyItem = {

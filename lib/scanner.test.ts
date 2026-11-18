@@ -341,3 +341,18 @@ test("a results batch left behind by a failed read is read again, without redoin
   assert.ok(fs.existsSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${now - 1000}`)));
   fs.rmSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${now - 1000}`));
 });
+
+test("one Lodestar per mirror folder: another install's OWNER leaves the folder alone", () => {
+  const owner = path.join(MIRROR, H.MIRROR_OWNER_FILE);
+  assert.ok(fs.existsSync(owner), "the first install to use the folder claims it");
+  assert.equal(H.mirrorDir(), MIRROR);
+  const mine = fs.readFileSync(owner, "utf8");
+  fs.writeFileSync(owner, "other-mac-1234\n");
+  assert.equal(H.mirrorDir(), null, "someone else's folder");
+  fs.writeFileSync(path.join(MIRROR, H.RESULTS_FILE), JSON.stringify({ application_id: 1, result: "failed", by: "grok" }) + "\n");
+  H.importApplyResults();
+  assert.ok(fs.existsSync(path.join(MIRROR, H.RESULTS_FILE)), "its results are not taken");
+  fs.rmSync(path.join(MIRROR, H.RESULTS_FILE));
+  fs.writeFileSync(owner, mine);
+  assert.equal(H.mirrorDir(), MIRROR);
+});
