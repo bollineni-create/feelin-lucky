@@ -320,18 +320,18 @@ export function recordApplyResult(r: ApplyResultLine): { ok: true; did: string }
 const STALE_BATCH_MS = 10 * 60_000;
 
 /**
- * Whether a line from a stale batch was recorded before its read failed. "applied" and "posting_closed" need no
- * check: once recorded, the job has left the apply queue and recordApplyResult refuses them. The other results leave
- * the job in the queue, so look for the event recording that result writes, dated after the batch was taken.
+ * Whether a line from a stale batch was recorded before its read failed: look for the event recording that result
+ * writes, dated after the batch was taken. That holds even if the job has since gone back to the apply queue.
  */
-const RECORDED_TITLE: Partial<Record<ApplyResultLine["result"], string>> = {
+const RECORDED_TITLE: Record<ApplyResultLine["result"], string> = {
+  applied: `${STAGE_LABEL.approved} → ${STAGE_LABEL.applied}`,
+  posting_closed: `${STAGE_LABEL.approved} → ${STAGE_LABEL.closed}`,
   needs_signin: "Needs you: portal sign-in",
   needs_answers: "Needs you: answers for the form",
   failed: "Apply attempt failed",
 };
 function recordedSince(r: ApplyResultLine, at: number) {
   const title = RECORDED_TITLE[r.result];
-  if (!title) return false;
   return db
     .select({ title: schema.events.title })
     .from(schema.events)

@@ -325,6 +325,15 @@ test("a results batch left behind by a failed read is read again, without redoin
   assert.equal(r.recorded, 2);
   assert.ok(r.refused.some((e) => e.includes(`#${handled} already handled`)));
   assert.equal(L.getApplication(busy)!.stage, "applied", "an unrelated event doesn't swallow a real result");
+
+  // Recorded as applied, then put back in the apply queue: the leftover line doesn't pull it out again.
+  const requeued = add("Stale Requeued");
+  const old2 = Date.now() - 30 * 60_000;
+  fs.writeFileSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${old2}`), JSON.stringify({ application_id: requeued, result: "applied", by: "grok" }) + "\n");
+  L.changeStage(requeued, "applied", { source: "grok" });
+  L.changeStage(requeued, "approved", { source: "you" });
+  H.importApplyResults();
+  assert.equal(L.getApplication(requeued)!.stage, "approved");
   assert.equal(L.getApplication(untouched)!.needsAnswers, true);
   assert.equal(L.getApplication(handled)!.needsAnswers, false, "not flagged a second time");
   assert.equal(L.getApplication(fresh)!.needsAnswers, false);
