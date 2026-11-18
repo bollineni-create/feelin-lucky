@@ -10,6 +10,7 @@
 // With LODESTAR_HANDOFF_DIR set (e.g. a folder in iCloud Drive the Grok bridge reads), the same files go there
 // too, with copies of each job's resume and cover letter, and results are read from there as well.
 
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -39,36 +40,65 @@ export function mirrorDir(): string | null {
 
 /**
  * One Lodestar per mirror folder. Two Macs pointed at the same iCloud folder (an old Mac waking up after the move to a
- * new one) would each rewrite the queue from their own database and take each other's results. The first install to
- * use the folder writes its install id to OWNER there; any other install leaves the folder alone. To move Lodestar to
- * another Mac on purpose, delete OWNER from the folder.
+ * new one) would each rewrite the queue from their own database and take each other's results. The install that owns
+ * the folder has its id in OWNER there; every other install leaves the folder alone.
+ * - The id is this Mac's hardware id plus a random part kept in data/install-id, so a data/ folder restored onto a new
+ *   Mac from a backup still gets an id of its own.
+ * - A brand-new folder (no apply-queue.json yet) is claimed by the first install to use it. An existing folder with no
+ *   OWNER (or one iCloud hasn't downloaded yet) is never claimed on its own: create data/claim-mirror on the Mac that
+ *   should own it. That file is used once and removed. To move Lodestar to another Mac, do the same there.
  */
 export const MIRROR_OWNER_FILE = "OWNER";
+export const MIRROR_CLAIM_FILE = "claim-mirror";
+let machine: string | null = null;
+function machineId(): string {
+  if (machine) return machine;
+  try {
+    if (process.platform === "darwin") {
+      const out = execFileSync("/usr/sbin/ioreg", ["-rd1", "-c", "IOPlatformExpertDevice"], { encoding: "utf8" });
+      machine = /"IOPlatformUUID" = "([^"]+)"/.exec(out)?.[1] ?? null;
+    } else {
+      machine = fs.readFileSync("/etc/machine-id", "utf8").trim() || null;
+    }
+  } catch {
+    machine = null;
+  }
+  machine ??= os.hostname();
+  return machine;
+}
 function installId(): string {
   const file = path.join(DATA_DIR, "install-id");
+  let part: string;
   try {
-    return fs.readFileSync(file, "utf8").trim();
+    part = fs.readFileSync(file, "utf8").trim();
   } catch {
-    const id = `${os.hostname()}-${crypto.randomUUID()}`;
+    part = crypto.randomUUID();
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(file, `${id}\n`);
-    return id;
+    fs.writeFileSync(file, `${part}\n`);
   }
+  return `${machineId()}:${part}`;
 }
 export function mirrorOwnedHere(dir: string): boolean {
   const owner = path.join(dir, MIRROR_OWNER_FILE);
+  const claim = path.join(DATA_DIR, MIRROR_CLAIM_FILE);
   const me = installId();
+  const claiming = fs.existsSync(claim);
   try {
-    return fs.readFileSync(owner, "utf8").trim() === me;
+    const current = fs.readFileSync(owner, "utf8").trim();
+    if (current === me) return true;
+    if (!claiming) return false;
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return false; // unreadable (iCloud busy): don't claim it
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(owner, `${me}\n`, { flag: "wx" });
-      return true;
-    } catch {
-      return false;
-    }
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return false; // there but unreadable (iCloud busy): not ours to take
+    // No OWNER: claim only a folder nothing has written to yet, or when this Mac was told to.
+    if (!claiming && fs.existsSync(path.join(dir, QUEUE_JSON))) return false;
+  }
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    writeAtomic(owner, `${me}\n`);
+    fs.rmSync(claim, { force: true });
+    return true;
+  } catch {
+    return false;
   }
 }
 

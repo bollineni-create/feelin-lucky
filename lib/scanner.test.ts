@@ -353,6 +353,13 @@ test("one Lodestar per mirror folder: another install's OWNER leaves the folder 
   H.importApplyResults();
   assert.ok(fs.existsSync(path.join(MIRROR, H.RESULTS_FILE)), "its results are not taken");
   fs.rmSync(path.join(MIRROR, H.RESULTS_FILE));
-  fs.writeFileSync(owner, mine);
+  // An existing folder whose OWNER is missing (or not downloaded yet) is not claimed on its own...
+  fs.rmSync(owner);
+  assert.equal(H.mirrorDir(), null);
+  // ...only when this Mac is told to, and the claim file is used once.
+  const claim = path.join(D.DATA_DIR, H.MIRROR_CLAIM_FILE);
+  fs.writeFileSync(claim, "");
   assert.equal(H.mirrorDir(), MIRROR);
+  assert.equal(fs.readFileSync(owner, "utf8"), mine);
+  assert.ok(!fs.existsSync(claim));
 });
