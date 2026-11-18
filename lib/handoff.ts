@@ -14,7 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import { DATA_DIR, ROOT, db, schema } from "./db";
 import { FOLLOW_UP_DAYS, STAGE_LABEL, bySubmitOrder, changeStage, clearSigninOnPortal, currentEmployer, daysFromNow, getApplication, getCriteria, getProfile, hasMaterials, iso, listApplications, logEvent, portalOf, type AppWithJob } from "./logic";
 import { portalHost, splitSigninWaits } from "./signin";
@@ -314,45 +314,97 @@ export function recordApplyResult(r: ApplyResultLine): { ok: true; did: string }
 /**
  * Reads apply-results.jsonl from data/handoff/ and the mirror folder, records each line, and moves what it read
  * into apply-results.archive.jsonl (with what happened), so a line is never recorded twice. The file is renamed
- * before it's read: an agent appending at that moment starts a new file and nothing is lost.
+ * before it's read: an agent appending at that moment starts a new file and nothing is lost. Nothing here throws:
+ * a file iCloud can't hand over yet is left for the next tick, so a stuck mirror never stops the queue being rewritten.
  */
-export function importApplyResults(): { recorded: number; refused: string[] } {
+const STALE_BATCH_MS = 10 * 60_000;
+
+/**
+ * Whether a line from a stale batch was recorded before its read failed: look for the event recording that result
+ * writes, dated after the batch was taken. That holds even if the job has since gone back to the apply queue.
+ */
+const RECORDED_TITLE: Record<ApplyResultLine["result"], string> = {
+  applied: `${STAGE_LABEL.approved} → ${STAGE_LABEL.applied}`,
+  posting_closed: `${STAGE_LABEL.approved} → ${STAGE_LABEL.closed}`,
+  needs_signin: "Needs you: portal sign-in",
+  needs_answers: "Needs you: answers for the form",
+  failed: "Apply attempt failed",
+};
+function recordedSince(r: ApplyResultLine, at: number) {
+  const title = RECORDED_TITLE[r.result];
+  return db
+    .select({ title: schema.events.title })
+    .from(schema.events)
+    .where(and(eq(schema.events.applicationId, r.application_id), gte(schema.events.at, new Date(at).toISOString())))
+    .all()
+    .some((e) => e.title.startsWith(title));
+}
+
+export function importApplyResults(now = Date.now()): { recorded: number; refused: string[] } {
   let recorded = 0;
   const refused: string[] = [];
   const dirs = [HANDOFF_DIR, mirrorDir()].filter((d): d is string => Boolean(d));
   for (const dir of [...new Set(dirs.map((d) => path.resolve(d)))]) {
     const file = path.join(dir, RESULTS_FILE);
-    if (!fs.existsSync(file) || fs.statSync(file).size === 0) continue;
-    const taken = `${file}.reading-${Date.now()}`;
+    const batches: { file: string; at: number; stale: boolean }[] = [];
+    // A batch left behind by an earlier read that failed part-way (an iCloud file evicted mid-read, the app quit):
+    // read it again. Lines already recorded are refused the second time, so nothing is recorded twice.
     try {
-      fs.renameSync(file, taken);
-    } catch {
-      continue;
-    }
-    const archived: string[] = [];
-    for (const raw of fs.readFileSync(taken, "utf8").split("\n")) {
-      const line = raw.trim();
-      if (!line) continue;
-      let outcome: string;
-      try {
-        const parsed = ApplyResult.parse(JSON.parse(line));
-        const r = recordApplyResult(parsed);
-        if (r.ok) {
-          recorded++;
-          outcome = r.did;
-        } else {
-          refused.push(r.error);
-          outcome = `refused: ${r.error}`;
-        }
-      } catch (e) {
-        const why = e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : e instanceof Error ? e.message : String(e);
-        refused.push(`unreadable line: ${why}`);
-        outcome = `unreadable: ${why}`;
+      for (const name of fs.readdirSync(dir)) {
+        if (!name.startsWith(`${RESULTS_FILE}.reading-`)) continue;
+        const at = Number(name.slice(`${RESULTS_FILE}.reading-`.length));
+        if (Number.isFinite(at) && now - at > STALE_BATCH_MS) batches.push({ file: path.join(dir, name), at, stale: true });
       }
-      archived.push(JSON.stringify({ at: iso(), line, outcome }));
+    } catch {
+      // Can't list the folder this tick: leftovers wait, the live file below is still taken.
     }
-    fs.appendFileSync(path.join(dir, ARCHIVE_FILE), archived.map((l) => `${l}\n`).join(""));
-    fs.rmSync(taken, { force: true });
+    try {
+      if (fs.existsSync(file) && fs.statSync(file).size > 0) {
+        const taken = `${file}.reading-${now}`;
+        fs.renameSync(file, taken);
+        batches.push({ file: taken, at: now, stale: false });
+      }
+    } catch {
+      // Can't take the file this tick (iCloud busy); the next one tries again.
+    }
+    for (const { file: taken, at, stale } of batches) {
+      let text: string;
+      try {
+        text = fs.readFileSync(taken, "utf8");
+      } catch {
+        continue; // Not readable yet (an evicted iCloud file downloads on access); kept for the next tick.
+      }
+      const archived: string[] = [];
+      for (const raw of text.split("\n")) {
+        const line = raw.trim();
+        if (!line) continue;
+        let outcome: string;
+        try {
+          const parsed = ApplyResult.parse(JSON.parse(line));
+          // A stale batch may have been recorded before its read failed: a line already recorded is archived, not
+          // applied again (so a job the user has since answered isn't flagged a second time).
+          const r = stale && recordedSince(parsed, at) ? { ok: false as const, error: `#${parsed.application_id} already handled since this batch` } : recordApplyResult(parsed);
+          if (r.ok) {
+            recorded++;
+            outcome = r.did;
+          } else {
+            refused.push(r.error);
+            outcome = `refused: ${r.error}`;
+          }
+        } catch (e) {
+          const why = e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : e instanceof Error ? e.message : String(e);
+          refused.push(`unreadable line: ${why}`);
+          outcome = `unreadable: ${why}`;
+        }
+        archived.push(JSON.stringify({ at: iso(), line, outcome }));
+      }
+      try {
+        fs.appendFileSync(path.join(dir, ARCHIVE_FILE), archived.map((l) => `${l}\n`).join(""));
+        fs.rmSync(taken, { force: true });
+      } catch {
+        // The archive couldn't be written; the batch stays and is read again later, where recorded lines are refused.
+      }
+    }
   }
   return { recorded, refused };
 }
