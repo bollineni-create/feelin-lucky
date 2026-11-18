@@ -279,13 +279,15 @@ function mirrorMaterials(dir: string, items: ApplyItem[]) {
     for (const f of [it.resume_file, it.resume_docx, it.cover_letter_file, it.cover_letter_docx]) {
       if (!f || !fs.existsSync(f)) continue;
       const to = path.join(dest, path.basename(f));
-      // Copying over a file iCloud has evicted fails (error -11), so remove the old copy first. A file that still
-      // won't copy is skipped: the queue file is written either way and the next tick tries that one again.
+      // Copying over a file iCloud has evicted fails (error -11), so copy to a new file and rename it into place: the
+      // old copy stays until the new one is complete. A file that still won't copy keeps its old copy, the queue file
+      // is written either way, and the next tick tries that one again.
+      const tmp = `${to}.tmp-${process.pid}`;
       try {
-        fs.rmSync(to, { force: true });
-        fs.copyFileSync(f, to);
+        fs.copyFileSync(f, tmp);
+        fs.renameSync(tmp, to);
       } catch {
-        // left for the next tick
+        fs.rmSync(tmp, { force: true });
       }
     }
   }
