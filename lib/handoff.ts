@@ -287,7 +287,11 @@ function mirrorMaterials(dir: string, items: ApplyItem[]) {
         fs.copyFileSync(f, tmp);
         fs.renameSync(tmp, to);
       } catch {
-        fs.rmSync(tmp, { force: true });
+        try {
+          fs.rmSync(tmp, { force: true });
+        } catch {
+          // a leftover temp file is harmless; the next tick overwrites it
+        }
       }
     }
   }
