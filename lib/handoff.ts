@@ -277,7 +277,16 @@ function mirrorMaterials(dir: string, items: ApplyItem[]) {
     const dest = path.join(root, String(it.application_id));
     fs.mkdirSync(dest, { recursive: true });
     for (const f of [it.resume_file, it.resume_docx, it.cover_letter_file, it.cover_letter_docx]) {
-      if (f && fs.existsSync(f)) fs.copyFileSync(f, path.join(dest, path.basename(f)));
+      if (!f || !fs.existsSync(f)) continue;
+      const to = path.join(dest, path.basename(f));
+      // Copying over a file iCloud has evicted fails (error -11), so remove the old copy first. A file that still
+      // won't copy is skipped: the queue file is written either way and the next tick tries that one again.
+      try {
+        fs.rmSync(to, { force: true });
+        fs.copyFileSync(f, to);
+      } catch {
+        // left for the next tick
+      }
     }
   }
   return root;
