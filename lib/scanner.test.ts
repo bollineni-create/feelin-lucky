@@ -299,3 +299,31 @@ test("auto-queue sends every match at or above its score to the apply queue, and
   assert.equal(stage(skipped), "approved");
   D.db.update(D.schema.searchCriteria).set({ autoApply: false }).where(eq(D.schema.searchCriteria.id, 1)).run();
 });
+
+test("a results batch left behind by a failed read is read again, without redoing what was handled", () => {
+  const add = (title: string) => {
+    const j = D.db.insert(D.schema.jobs).values({ companyId: co["Plaid"], companyName: "Plaid", source: "careers", title, fitScore: 90, dedupeKey: `stale-${title}` }).returning().get();
+    return D.db.insert(D.schema.applications).values({ jobId: j.id, stage: "approved", resumeMd: "r", coverLetterMd: "c" }).returning().get().id;
+  };
+  const untouched = add("Stale Untouched");
+  const handled = add("Stale Handled");
+  const fresh = add("Stale Fresh");
+  const now = Date.now();
+  const old = now - 60 * 60_000;
+  // Something happened to this job after the batch was taken (it was recorded before the read failed).
+  L.logEvent({ applicationId: handled, type: "note", title: "recorded earlier", at: new Date(old + 60_000).toISOString() });
+  const line = (id: number) => JSON.stringify({ application_id: id, result: "needs_answers", note: "Desired salary", by: "grok" });
+  fs.writeFileSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${old}`), [line(untouched), line(handled)].join("\n") + "\n");
+  // A batch taken moments ago may still be mid-read elsewhere: left alone.
+  fs.writeFileSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${now - 1000}`), line(fresh) + "\n");
+
+  const r = H.importApplyResults(now);
+  assert.equal(r.recorded, 1);
+  assert.ok(r.refused.some((e) => e.includes(`#${handled} already handled`)));
+  assert.equal(L.getApplication(untouched)!.needsAnswers, true);
+  assert.equal(L.getApplication(handled)!.needsAnswers, false, "not flagged a second time");
+  assert.equal(L.getApplication(fresh)!.needsAnswers, false);
+  assert.ok(!fs.existsSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${old}`)), "the stale batch is archived and removed");
+  assert.ok(fs.existsSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${now - 1000}`)));
+  fs.rmSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${now - 1000}`));
+});
