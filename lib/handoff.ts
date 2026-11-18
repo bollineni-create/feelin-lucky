@@ -319,16 +319,27 @@ export function recordApplyResult(r: ApplyResultLine): { ok: true; did: string }
  */
 const STALE_BATCH_MS = 10 * 60_000;
 
-function touchedSince(appId: number, at: number) {
-  const since = new Date(at).toISOString();
-  return Boolean(
-    db
-      .select({ id: schema.events.id })
-      .from(schema.events)
-      .where(and(eq(schema.events.applicationId, appId), gte(schema.events.at, since)))
-      .get(),
-  );
+/**
+ * Whether a line from a stale batch was recorded before its read failed. "applied" and "posting_closed" need no
+ * check: once recorded, the job has left the apply queue and recordApplyResult refuses them. The other results leave
+ * the job in the queue, so look for the event recording that result writes, dated after the batch was taken.
+ */
+const RECORDED_TITLE: Partial<Record<ApplyResultLine["result"], string>> = {
+  needs_signin: "Needs you: portal sign-in",
+  needs_answers: "Needs you: answers for the form",
+  failed: "Apply attempt failed",
+};
+function recordedSince(r: ApplyResultLine, at: number) {
+  const title = RECORDED_TITLE[r.result];
+  if (!title) return false;
+  return db
+    .select({ title: schema.events.title })
+    .from(schema.events)
+    .where(and(eq(schema.events.applicationId, r.application_id), gte(schema.events.at, new Date(at).toISOString())))
+    .all()
+    .some((e) => e.title.startsWith(title));
 }
+
 export function importApplyResults(now = Date.now()): { recorded: number; refused: string[] } {
   let recorded = 0;
   const refused: string[] = [];
@@ -345,7 +356,7 @@ export function importApplyResults(now = Date.now()): { recorded: number; refuse
         if (Number.isFinite(at) && now - at > STALE_BATCH_MS) batches.push({ file: path.join(dir, name), at, stale: true });
       }
     } catch {
-      continue;
+      // Can't list the folder this tick: leftovers wait, the live file below is still taken.
     }
     try {
       if (fs.existsSync(file) && fs.statSync(file).size > 0) {
@@ -370,9 +381,9 @@ export function importApplyResults(now = Date.now()): { recorded: number; refuse
         let outcome: string;
         try {
           const parsed = ApplyResult.parse(JSON.parse(line));
-          // A stale batch may have been recorded before its read failed: any event on the job since the batch was
-          // taken means it was (or the user has moved it on), so the line is archived without being applied again.
-          const r = stale && touchedSince(parsed.application_id, at) ? { ok: false as const, error: `#${parsed.application_id} already handled since this batch` } : recordApplyResult(parsed);
+          // A stale batch may have been recorded before its read failed: a line already recorded is archived, not
+          // applied again (so a job the user has since answered isn't flagged a second time).
+          const r = stale && recordedSince(parsed, at) ? { ok: false as const, error: `#${parsed.application_id} already handled since this batch` } : recordApplyResult(parsed);
           if (r.ok) {
             recorded++;
             outcome = r.did;

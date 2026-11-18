@@ -308,18 +308,23 @@ test("a results batch left behind by a failed read is read again, without redoin
   const untouched = add("Stale Untouched");
   const handled = add("Stale Handled");
   const fresh = add("Stale Fresh");
+  const busy = add("Stale Busy");
   const now = Date.now();
   const old = now - 60 * 60_000;
-  // Something happened to this job after the batch was taken (it was recorded before the read failed).
-  L.logEvent({ applicationId: handled, type: "note", title: "recorded earlier", at: new Date(old + 60_000).toISOString() });
+  // Recorded before the read failed: the event that recording writes is there, dated after the batch was taken.
+  L.logEvent({ applicationId: handled, type: "portal_update", title: "Needs you: answers for the form", at: new Date(old + 60_000).toISOString() });
+  // Something unrelated happened to this one; its result was never recorded and still counts.
+  L.logEvent({ applicationId: busy, type: "email", title: "Thanks for applying", at: new Date(old + 60_000).toISOString() });
   const line = (id: number) => JSON.stringify({ application_id: id, result: "needs_answers", note: "Desired salary", by: "grok" });
-  fs.writeFileSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${old}`), [line(untouched), line(handled)].join("\n") + "\n");
+  const applied = JSON.stringify({ application_id: busy, result: "applied", confirmation: "Thanks", by: "grok" });
+  fs.writeFileSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${old}`), [line(untouched), line(handled), applied].join("\n") + "\n");
   // A batch taken moments ago may still be mid-read elsewhere: left alone.
   fs.writeFileSync(path.join(MIRROR, `${H.RESULTS_FILE}.reading-${now - 1000}`), line(fresh) + "\n");
 
   const r = H.importApplyResults(now);
-  assert.equal(r.recorded, 1);
+  assert.equal(r.recorded, 2);
   assert.ok(r.refused.some((e) => e.includes(`#${handled} already handled`)));
+  assert.equal(L.getApplication(busy)!.stage, "applied", "an unrelated event doesn't swallow a real result");
   assert.equal(L.getApplication(untouched)!.needsAnswers, true);
   assert.equal(L.getApplication(handled)!.needsAnswers, false, "not flagged a second time");
   assert.equal(L.getApplication(fresh)!.needsAnswers, false);
