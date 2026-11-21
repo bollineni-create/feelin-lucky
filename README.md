@@ -159,6 +159,13 @@ Lodestar finds and prepares; it doesn't apply. On the Queue, **Send to apply que
 
 The rules the server enforces are the same whoever applies: only a job you put in the apply queue can be marked applied, never a job at your current employer, and nothing puts a job in the queue but you, or auto-queue when you've turned it on.
 
+## Batch API scoring and the apply worker
+
+Two jobs run beside the daily scan, each on its own schedule (installed by `scripts/install-launchd.sh`):
+
+- **Scoring and materials on the Batch API** (`scripts/batch-prepare.ts`, weekdays 8 AM and 1 PM). Every found job whose posting text is stored (the job-board feeds store it) is scored with Haiku and, if it clears the threshold, gets a tailored resume or CV, cover letter and screening answers from Sonnet, through Anthropic's Message Batches API at half price, paid from Console credits rather than the claude.ai plan. Same rules as the runbook's prepare phase. With `LODESTAR_BATCH_PREPARE=1` the Chrome run leaves those jobs alone and only handles the ones it has to open in the browser. Set a key once: `security add-generic-password -s lodestar-anthropic -a anthropic -w "sk-ant-..."`. Run it by hand with `npm run batch -- auto` (or `score`, `materials`, `collect`, `status`). An optional local model (`LODESTAR_LOCAL_MODEL_URL`) drops clear non-matches first.
+- **The apply worker** (`scripts/apply-run.sh`, weekdays 10 AM and 3 PM). Claude applies to the jobs in the apply queue, one short Claude Code session per job with Claude in Chrome, so no session carries the whole queue. Each follows [`agent/APPLY.md`](agent/APPLY.md) and reports back like any apply agent. It can't use Safari, Mail or Messages, so new accounts and emailed or texted codes come back as `needs_signin`. `npm run apply -- --max 3` runs a few by hand.
+
 ## Email tracking (Apple Mail)
 
 Employers answer by email: a confirmation that the application arrived, then a rejection, a request to talk, an assessment or an offer. Lodestar reads those from the Mail app on your Mac, whatever accounts it has (Gmail, iCloud, Outlook), so the pipeline stays current without signing in to each portal.

@@ -79,9 +79,15 @@ export const GET = agentRoute(async (req) => {
     triageScore({ title: a.job.title, location: a.job.location, workMode: a.job.workMode, postedAt: a.job.postedAt, priority: a.companyPriority, lookupId: a.job.lookupId }, criteria);
   const unscored = found.filter((a) => a.job.fitScore == null).map((a) => ({ a, t: triage(a) }));
   unscored.sort((x, y) => y.t - x.t);
-  const needsScore = unscored.slice(0, scoreLimit).map((x) => x.a);
+  // With LODESTAR_BATCH_PREPARE=1, jobs whose posting text is stored are scored and prepared by the Batch API
+  // (scripts/batch-prepare.ts, Console credits), so the Chrome run leaves them alone and keeps only the ones it has
+  // to open in the browser. The batch script itself asks with ?for=batch and gets the stored-text ones.
+  const batchMode = process.env.LODESTAR_BATCH_PREPARE === "1";
+  const forBatch = url.searchParams.get("for") === "batch";
+  const share = (a: AppWithJob) => !batchMode || (forBatch ? Boolean(a.job.description) : !a.job.description);
+  const needsScore = unscored.filter((x) => share(x.a)).slice(0, scoreLimit).map((x) => x.a);
   // A job found for a lookup (the user asked for it) gets materials whatever it scored; the user decides in the Queue.
-  const needsMaterials = [...found].sort(byWatchlistQuickThenScore).filter((a) => a.job.fitScore != null && !hasMaterials(a) && (a.job.lookupId != null || a.job.fitScore >= thresholdFor(a.job.companyId)));
+  const needsMaterials = [...found].sort(byWatchlistQuickThenScore).filter((a) => share(a) && a.job.fitScore != null && !hasMaterials(a) && (a.job.lookupId != null || a.job.fitScore >= thresholdFor(a.job.companyId)));
 
   // What the user asked the agent to look for on this scan: a title, a company, or both. Taken before the watchlist.
   const lookupsOut = pendingLookups().map((l) => {

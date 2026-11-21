@@ -11,7 +11,9 @@
     "test": "node --import tsx --test lib/*.test.ts scripts/mail/*.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
-    "db:seed": "tsx db/seed.ts"
+    "db:seed": "tsx db/seed.ts",
+    "batch": "tsx scripts/batch-prepare.ts",
+    "apply": "bash scripts/apply-run.sh"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
