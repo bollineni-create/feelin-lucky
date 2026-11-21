@@ -17,7 +17,11 @@ export const POST = agentRoute(async (req, params) => {
   const b = await parseBody(req, Body);
   const app = getApplicationByJob(jobId);
   if (!app) throw new ApiError(404, "job not found");
-  if (app.stage !== "found") throw new ApiError(409, `materials can only be set while the application is "found" (it is "${app.stage}")`);
+  // "approved" (in the apply queue) may be refreshed too: scripts/batch-prepare.ts `refresh` rewrites queued jobs'
+  // materials with a stronger model before the apply agent sends them.
+  if (app.stage !== "found" && app.stage !== "approved") throw new ApiError(409, `materials can only be set while the application is "found" or "approved" (it is "${app.stage}")`);
+  // A refresh with no screening answers keeps the ones already there.
+  const answers = b.answers.length || app.stage === "found" ? b.answers : (app.answers ?? []);
 
   const rendered = await renderMaterials(jobId, b.resume_md, b.cover_letter_md, b.resume_version);
   db.update(schema.applications)
@@ -25,13 +29,13 @@ export const POST = agentRoute(async (req, params) => {
       resumeVersion: b.resume_version,
       resumeMd: b.resume_md,
       coverLetterMd: b.cover_letter_md,
-      answers: b.answers,
+      answers,
       resumePath: rendered.resumePath,
       coverLetterPath: rendered.coverLetterPath,
       materialsUpdatedAt: iso(),
     })
     .where(eq(schema.applications.id, app.id))
     .run();
-  logEvent({ applicationId: app.id, type: "note", title: "Materials ready", detail: `Tailored ${b.resume_version}, cover letter, ${b.answers.length} screening answers` });
+  logEvent({ applicationId: app.id, type: "note", title: app.stage === "approved" ? "Materials refreshed" : "Materials ready", detail: `Tailored ${b.resume_version}, cover letter, ${answers.length} screening answers` });
   return { application_id: app.id, files: rendered.files, queued: true };
 });
