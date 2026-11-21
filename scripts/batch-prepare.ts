@@ -161,8 +161,8 @@ async function submit(kind: Kind): Promise<string | null> {
     jobs[id] = j;
     requests.push(
       kind === "score"
-        ? batchRequest(id, SCORE_MODEL, system, jobBlock(j), 400)
-        : batchRequest(id, MATERIALS_MODEL, system, jobBlock(j), 4000),
+        ? batchRequest(id, SCORE_MODEL, system, jobBlock(j), 1200)
+        : batchRequest(id, MATERIALS_MODEL, system, jobBlock(j), 8000),
     );
   }
   if (localDrops.length) {
