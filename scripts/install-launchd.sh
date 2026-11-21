@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Installs four launch agents:
+# Installs five launch agents:
 #   com.jobhunt.app     keeps the app running on 127.0.0.1:3000
 #   com.jobhunt.daily   runs scripts/daily-run.sh at 7:00 AM, Monday–Friday
 #   com.jobhunt.batch   runs scripts/batch-run.sh (Batch API scoring and materials) at 8:00 AM and 1:00 PM, Monday–Friday
+#   com.jobhunt.apply   runs scripts/apply-run.sh (Claude applies from the queue) at 10:00 AM and 3:00 PM, Monday–Friday
 #   com.jobhunt.update  runs scripts/auto-update.sh every minute (installs new commits on main as they land)
 # launchd uses the Mac's local time zone; keep the Mac on Pacific time for 7:00 AM PT.
 #   scripts/install-launchd.sh            install / reinstall
@@ -173,14 +174,12 @@ $(weekday_hours "$@")  </array>
 PLIST
 }
 write_scheduled_plist "$BATCH_PLIST" com.jobhunt.batch batch-run.sh 8 13
-# No scheduled apply run: a Claude scheduled task already works the apply queue, and two apply agents on one queue
-# could submit the same job twice. scripts/apply-run.sh stays for runs by hand (npm run apply).
-unload "$APPLY_PLIST"; rm -f "$APPLY_PLIST"
+write_scheduled_plist "$APPLY_PLIST" com.jobhunt.apply apply-run.sh 10 15
 
-for p in "$APP_PLIST" "$DAILY_PLIST" "$UPDATE_PLIST" "$BATCH_PLIST"; do
+for p in "$APP_PLIST" "$DAILY_PLIST" "$UPDATE_PLIST" "$BATCH_PLIST" "$APPLY_PLIST"; do
   unload "$p"
   load "$p"
 done
-echo "Installed. App: http://127.0.0.1:3000 · daily run: weekdays 7:00 AM ($TZ_NAME) · Batch API scoring: 8 AM and 1 PM · updates from GitHub: checked every minute, installed as they land."
+echo "Installed. App: http://127.0.0.1:3000 · daily run: weekdays 7:00 AM ($TZ_NAME) · Batch API scoring: 8 AM and 1 PM · applying: 10 AM and 3 PM · updates from GitHub: checked every minute, installed as they land."
 [ "$TZ_NAME" = "America/Los_Angeles" ] || echo "Note: this Mac isn't on Pacific time, so 7:00 AM is local time."
 echo "Logs: $ROOT/logs/"
