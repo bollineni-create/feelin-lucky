@@ -5,6 +5,7 @@
 //   npm run batch -- materials    submit every scored job that still needs materials
 //   npm run batch -- collect      record the results of finished batches (safe to run any time)
 //   npm run batch -- auto         score → wait → collect → materials → wait → collect
+//   npm run batch -- refresh      rewrite the materials of every job in the apply queue (LODESTAR_REFRESH_MODEL, Opus)
 //   npm run batch -- status       list submitted batches
 //
 // API key: LODESTAR_ANTHROPIC_KEY in .env, else the macOS Keychain item "lodestar-anthropic"
@@ -67,7 +68,8 @@ async function anthropic<T>(url: string, init: RequestInit = {}): Promise<T> {
   return JSON.parse(await anthropicText(url, init)) as T;
 }
 
-type Kind = "score" | "materials";
+type Kind = "score" | "materials" | "refresh";
+const REFRESH_MODEL = process.env.LODESTAR_REFRESH_MODEL ?? "claude-opus-5-5";
 type Saved = { id: string; kind: Kind; created_at: string; jobs: Record<string, JobDetail>; collected?: boolean };
 
 function save(s: Saved) {
@@ -133,10 +135,15 @@ async function postScores(rows: { j: JobDetail; s: { fit_score: number; fit_reas
 async function submit(kind: Kind): Promise<string | null> {
   const ctx = await app<ContextOut>("GET", "/api/agent/context?for=batch&score_limit=500&companies_limit=1&recheck_limit=1");
   const pending = pendingJobIds(kind);
-  const candidates =
-    kind === "score"
-      ? ctx.jobs_needing_score.filter((j) => j.has_description).map((j) => ({ job_id: j.job_id, watchlist: j.watchlist }))
-      : ctx.jobs_needing_materials.map((j) => ({ job_id: j.job_id, watchlist: j.watchlist, fit_reasons: j.fit_reasons }));
+  let candidates: { job_id: number; watchlist?: string; fit_reasons?: string[] | null }[];
+  if (kind === "score") candidates = ctx.jobs_needing_score.filter((j) => j.has_description).map((j) => ({ job_id: j.job_id, watchlist: j.watchlist }));
+  else if (kind === "materials") candidates = ctx.jobs_needing_materials.map((j) => ({ job_id: j.job_id, watchlist: j.watchlist, fit_reasons: j.fit_reasons }));
+  else {
+    const q = await app<{ items: { job_id: number }[] }>("GET", "/api/agent/apply-queue");
+    // Already refreshed in an earlier collected batch: skip.
+    const done = new Set(saved().filter((s) => s.kind === "refresh" && s.collected).flatMap((s) => Object.values(s.jobs).map((j) => j.job_id)));
+    candidates = q.items.filter((i) => !done.has(i.job_id)).map((i) => ({ job_id: i.job_id }));
+  }
   const todo = candidates.filter((j) => !pending.has(j.job_id)).slice(0, MAX_JOBS);
   if (!todo.length) {
     console.log(`${kind}: nothing to submit.`);
@@ -162,7 +169,7 @@ async function submit(kind: Kind): Promise<string | null> {
     requests.push(
       kind === "score"
         ? batchRequest(id, SCORE_MODEL, system, jobBlock(j), 1200)
-        : batchRequest(id, MATERIALS_MODEL, system, jobBlock(j), 8000),
+        : batchRequest(id, kind === "refresh" ? REFRESH_MODEL : MATERIALS_MODEL, system, jobBlock(j), 8000),
     );
   }
   if (localDrops.length) {
@@ -229,6 +236,10 @@ async function waitAll() {
 async function main() {
   const cmd = process.argv[2] ?? "status";
   if (cmd === "score" || cmd === "materials") await submit(cmd);
+  else if (cmd === "refresh") {
+    await submit("refresh");
+    await waitAll();
+  }
   else if (cmd === "collect") await collect();
   else if (cmd === "auto") {
     await submit("score");
