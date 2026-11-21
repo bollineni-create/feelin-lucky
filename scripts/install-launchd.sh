@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Installs three launch agents:
+# Installs five launch agents:
 #   com.jobhunt.app     keeps the app running on 127.0.0.1:3000
 #   com.jobhunt.daily   runs scripts/daily-run.sh at 7:00 AM, Monday–Friday
+#   com.jobhunt.batch   runs scripts/batch-run.sh (Batch API scoring and materials) at 8:00 AM and 1:00 PM, Monday–Friday
+#   com.jobhunt.apply   runs scripts/apply-run.sh (Claude applies from the queue) at 10:00 AM and 3:00 PM, Monday–Friday
 #   com.jobhunt.update  runs scripts/auto-update.sh every minute (installs new commits on main as they land)
 # launchd uses the Mac's local time zone; keep the Mac on Pacific time for 7:00 AM PT.
 #   scripts/install-launchd.sh            install / reinstall
@@ -15,6 +17,8 @@ AGENTS="$HOME/Library/LaunchAgents"
 APP_PLIST="$AGENTS/com.jobhunt.app.plist"
 DAILY_PLIST="$AGENTS/com.jobhunt.daily.plist"
 UPDATE_PLIST="$AGENTS/com.jobhunt.update.plist"
+BATCH_PLIST="$AGENTS/com.jobhunt.batch.plist"
+APPLY_PLIST="$AGENTS/com.jobhunt.apply.plist"
 UID_NUM="$(id -u)"
 
 unload() { launchctl bootout "gui/$UID_NUM" "$1" 2>/dev/null || true; }
@@ -32,8 +36,8 @@ load() {
 }
 
 if [ "${1:-}" = "--remove" ]; then
-  unload "$APP_PLIST"; unload "$DAILY_PLIST"; unload "$UPDATE_PLIST"
-  rm -f "$APP_PLIST" "$DAILY_PLIST" "$UPDATE_PLIST"
+  unload "$APP_PLIST"; unload "$DAILY_PLIST"; unload "$UPDATE_PLIST"; unload "$BATCH_PLIST"; unload "$APPLY_PLIST"
+  rm -f "$APP_PLIST" "$DAILY_PLIST" "$UPDATE_PLIST" "$BATCH_PLIST" "$APPLY_PLIST"
   echo "Removed launch agents."; exit 0
 fi
 
@@ -138,10 +142,44 @@ if [ "${1:-}" = "--update-only" ]; then
 fi
 write_update_plist
 
-for p in "$APP_PLIST" "$DAILY_PLIST" "$UPDATE_PLIST"; do
+# Weekday schedule entries for the hours given (local time).
+weekday_hours() {
+  local out="" d h
+  for d in 1 2 3 4 5; do for h in "$@"; do
+    out+="    <dict><key>Weekday</key><integer>$d</integer><key>Hour</key><integer>$h</integer><key>Minute</key><integer>0</integer></dict>
+"
+  done; done
+  printf '%s' "$out"
+}
+write_scheduled_plist() { # plist label script hours...
+  local plist="$1" label="$2" script="$3"; shift 3
+  cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>WorkingDirectory</key><string>$ROOT</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/bash</string><string>$ROOT/scripts/$script</string></array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>$NODE_DIR:$CLAUDE_DIR:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StartCalendarInterval</key>
+  <array>
+$(weekday_hours "$@")  </array>
+  <key>StandardOutPath</key><string>$ROOT/logs/launchd-$label.log</string>
+  <key>StandardErrorPath</key><string>$ROOT/logs/launchd-$label.log</string>
+</dict>
+</plist>
+PLIST
+}
+write_scheduled_plist "$BATCH_PLIST" com.jobhunt.batch batch-run.sh 8 13
+write_scheduled_plist "$APPLY_PLIST" com.jobhunt.apply apply-run.sh 10 15
+
+for p in "$APP_PLIST" "$DAILY_PLIST" "$UPDATE_PLIST" "$BATCH_PLIST" "$APPLY_PLIST"; do
   unload "$p"
   load "$p"
 done
-echo "Installed. App: http://127.0.0.1:3000 · daily run: weekdays 7:00 AM ($TZ_NAME) · updates from GitHub: checked every minute, installed as they land."
+echo "Installed. App: http://127.0.0.1:3000 · daily run: weekdays 7:00 AM ($TZ_NAME) · Batch API scoring: 8 AM and 1 PM · applying: 10 AM and 3 PM · updates from GitHub: checked every minute, installed as they land."
 [ "$TZ_NAME" = "America/Los_Angeles" ] || echo "Note: this Mac isn't on Pacific time, so 7:00 AM is local time."
 echo "Logs: $ROOT/logs/"

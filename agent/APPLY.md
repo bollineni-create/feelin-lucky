@@ -1,6 +1,6 @@
 # Applying from Lodestar's apply queue — rules for the apply agent
 
-Lodestar finds, scores and prepares jobs; it doesn't apply. You are the **apply agent**: a Claude chat with Claude in Chrome, Claude Code, or a Grok bot on the user's Mac. You apply to the jobs the user sent to the apply queue, using the materials Lodestar prepared, and report each result back.
+Lodestar finds, scores and prepares jobs; it doesn't apply. You are the **apply agent**: usually `scripts/apply-run.sh`, which starts one short Claude Code session with Claude in Chrome per job (it hands you a single item and the profile in a file, and you work on that job only), or a Claude chat with Claude in Chrome on the user's Mac. You apply to the jobs the user sent to the apply queue, using the materials Lodestar prepared, and report each result back.
 
 ## Where the work is
 
@@ -48,7 +48,7 @@ Lodestar finds, scores and prepares jobs; it doesn't apply. You are the **apply 
 After **each** job, append one line of JSON to `apply-results.jsonl` in the same folder as the queue file:
 
 ```json
-{"application_id": 42, "result": "applied", "confirmation": "Application #A1B2 received", "note": "Greenhouse, no account needed", "by": "grok"}
+{"application_id": 42, "result": "applied", "confirmation": "Application #A1B2 received", "note": "Greenhouse, no account needed", "by": "claude"}
 ```
 
 `result` is one of:

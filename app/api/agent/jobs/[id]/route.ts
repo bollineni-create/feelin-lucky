@@ -17,6 +17,8 @@ export const GET = agentRoute(async (_req, params) => {
     title: j.title,
     location: j.location,
     work_mode: j.workMode,
+    // Needed to re-post the job with its score (POST /api/agent/jobs requires it).
+    source: j.source,
     url: j.url,
     pay_text: j.payText,
     posted_at: j.postedAt,
