@@ -165,6 +165,8 @@ function toItem(a: AppWithJob): ApplyItem {
  * ready, quick boards first. Jobs at the current employer never go in (the user applies internally); forms waiting
  * on the user's answers, and portals still waiting on a sign-in, are listed under `waiting` instead.
  */
+const companyKey = (name: string | null | undefined) => (name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
 export function buildApplyQueue(): ApplyQueue {
   const profile = getProfile();
   const approved = listApplications(eq(applications.stage, "approved")).filter((a) => !a.internal);
@@ -179,6 +181,31 @@ export function buildApplyQueue(): ApplyQueue {
   const split = profile.agentCreatesAccounts ? { toSubmit: ready.sort(bySubmitOrder) } : splitSigninWaits(ready.sort(bySubmitOrder));
   for (const a of ready.filter((x) => !split.toSubmit.includes(x))) {
     waiting.push({ application_id: a.id, company: a.job.companyName, title: a.job.title, why: `${portalHost(a.job.url, a.job.companyName)} still wants a sign-in; press I've signed in on the Queue once you have` });
+  }
+  // Per-company cap: a recruiter who sees ten applications from one person reads it as unfocused. Count what was
+  // submitted to the company in the last 90 days, then let only the best-scored jobs fill the rest of the cap.
+  const cap = Number(process.env.LODESTAR_MAX_PER_COMPANY ?? 2);
+  if (cap > 0) {
+    const since = Date.now() - 90 * 86_400_000;
+    const sent = new Map<string, number>();
+    for (const a of listApplications(eq(applications.stage, "applied"))) {
+      if (a.submittedAt && Date.parse(a.submittedAt) >= since) {
+        const k = companyKey(a.job.companyName);
+        sent.set(k, (sent.get(k) ?? 0) + 1);
+      }
+    }
+    const kept: AppWithJob[] = [];
+    for (const a of [...split.toSubmit].sort((x, y) => (y.job.fitScore ?? 0) - (x.job.fitScore ?? 0))) {
+      const k = companyKey(a.job.companyName);
+      const n = sent.get(k) ?? 0;
+      if (n >= cap) {
+        waiting.push({ application_id: a.id, company: a.job.companyName, title: a.job.title, why: `already ${n} application(s) to ${a.job.companyName} in 90 days (cap ${cap})` });
+        continue;
+      }
+      sent.set(k, n + 1);
+      kept.push(a);
+    }
+    split.toSubmit = split.toSubmit.filter((a) => kept.includes(a));
   }
   const employer = currentEmployer();
   return {
